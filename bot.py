@@ -62,7 +62,7 @@ EDIT_CHOICE, EDIT_FIELD, EDIT_VALUE, DELETE_CHOICE, DELETE_CONFIRM = range(22, 2
 CHECK_MEASURE = 27
 
 # ------------------------------------------------------
-# 2) ФУНКЦИЯ ГЕНЕРАЦИИ PNG (ТАБЛИЦЫ) + ЛОГОТИП
+# 2) ФУНКЦИЯ ГЕНЕРАЦИИ PNG (ТАБЛИЦЫ) + ЛОГО
 # ------------------------------------------------------
 def generate_measurement_image(client_data: dict) -> io.BytesIO:
     """
@@ -71,9 +71,9 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
       Добор, Кол-во доборов, Наличники,
       Порог, Демонтаж, Открывание, Комментарий
 
-    В левом верхнем углу выводится информация о клиенте (Имя, Телефон, Адрес).
-    В правом верхнем углу добавляется логотип (Logo_rusdver.png).
-    Ниже формируется таблица.
+    В левом верхнем углу — данные о клиенте.
+    В правом верхнем углу — логотип, уменьшенный до 150 px по ширине.
+    Под логотипом оставляем дополнительный отступ.
     """
     # Ширина колонок
     col_widths = [
@@ -122,14 +122,13 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
         f"Адрес: {client_data.get('client_address', '')}\n"
     )
 
-    # Пытаемся загрузить шрифт (Montserrat)
+    # Шрифт для текста
     try:
         font = ImageFont.truetype("Montserrat-Regular.ttf", 16)
     except Exception as e:
         print("Ошибка при загрузке шрифта Montserrat:", e)
         font = ImageFont.load_default()
 
-    # Подготовка к рисованию
     temp_img = Image.new("RGB", (10, 10))
     draw_temp = ImageDraw.Draw(temp_img)
 
@@ -160,7 +159,6 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
     row_lines = []
     row_heights = []
 
-    # Сначала формируем данные для таблицы
     for row_idx, row_data in enumerate(rows):
         max_height = 0
         row_lines.append([])
@@ -179,28 +177,29 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
     margin = 50
     table_width = sum(col_widths) + margin * 2
 
-    # Считаем высоту инфоблока (текст клиента)
+    # Информация о клиенте (высота)
     info_lines = client_info.strip().split("\n")
     _, line_h = get_text_size("A", font)
     info_block_height = line_h * len(info_lines) + 40
 
-    # Для лого, если есть
-    logo_path = "Logo_rusdver.png"  # Имя файла логотипа
-    logo_width = 0
-    logo_height = 0
+    # Загружаем логотип
+    logo_path = "Logo_rusdver.png"  # Имя файла
     try:
         logo = Image.open(logo_path).convert("RGBA")
-        # Можно масштабировать, если логотип слишком большой
-        # logo.thumbnail((150, 50))
+        # Масштабируем ширину до 150 px, пропорции сохраняются
+        logo.thumbnail((150, 9999))
         logo_width, logo_height = logo.size
     except Exception as e:
-        logo = None
         print("Ошибка при загрузке логотипа:", e)
+        logo = None
+        logo_width = 0
+        logo_height = 0
 
-    # Высота, которую займёт "верхний блок" = макс(высота текста, высота лого)
+    # Высота верхнего блока = макс(высота текста, высота лого)
     top_block_height = max(info_block_height, logo_height)
+    # Добавим доп. отступ (20 px) под логотип
+    top_block_height += 20
 
-    # Высота таблицы
     table_height = sum(row_heights) + margin * 2
     total_height = top_block_height + table_height
 
@@ -208,20 +207,20 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
     img = Image.new("RGB", (table_width, total_height), color="white")
     draw = ImageDraw.Draw(img)
 
-    # Рисуем информацию о клиенте в левом верхнем углу
+    # Рисуем текст клиента (левый верх)
     y_offset = 20
     draw.text((margin, y_offset), client_info, font=font, fill="black")
 
-    # Рисуем логотип в правом верхнем углу
+    # Рисуем логотип (правый верх)
     if logo:
         x_logo = table_width - margin - logo_width
         y_logo = 20
         img.paste(logo, (x_logo, y_logo), logo)
 
-    # Теперь смещаем y_offset на высоту верхнего блока
+    # Отступ под верхний блок
     y_offset = top_block_height
 
-    # Рисуем таблицу ниже
+    # Рисуем таблицу
     for row_idx, row_data in enumerate(rows):
         row_h = row_heights[row_idx]
         x_offset = margin
@@ -235,15 +234,16 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
             lines = row_lines[row_idx][col_idx]
             text_x = x_offset + cell_padding
             text_y = y_offset + cell_padding
+            _, line_h = get_text_size("A", font)
+            line_height_with_spacing = line_h + line_spacing
 
             for line in lines:
                 draw.text((text_x, text_y), line, font=font, fill="black")
-                text_y += (line_h + line_spacing)
+                text_y += line_height_with_spacing
 
             x_offset += w_col
         y_offset += row_h
 
-    # Сохраняем в BytesIO
     bio = io.BytesIO()
     bio.name = "zamery.png"
     img.save(bio, "PNG")
@@ -251,18 +251,19 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
     return bio
 
 # ------------------------------------------------------
-# 3) НАЛОЖЕНИЕ ПОДПИСЕЙ НА ФОТО И ОТПРАВКА АЛЬБОМОМ
+# 3) ФУНКЦИИ ДЛЯ ОТРАЖЕНИЯ ТЕКСТА НА ФОТО И АЛЬБОМА
 # ------------------------------------------------------
 FONT_PATH = "Montserrat-Regular.ttf"
 
 async def overlay_text_on_photo(context: ContextTypes.DEFAULT_TYPE, file_id: str, text: str) -> io.BytesIO:
     """
-    Скачивает фото по file_id, накладывает подпись (text) и возвращает BytesIO с изменённым фото.
+    Скачивает фото, накладывает подпись text и возвращает BytesIO
     """
     temp_path = "temp_photo.jpg"
     telegram_file = await context.bot.get_file(file_id)
     await telegram_file.download_to_drive(temp_path)
 
+    from PIL import ImageDraw, ImageFont
     img = Image.open(temp_path).convert("RGBA")
     draw = ImageDraw.Draw(img)
 
@@ -275,7 +276,6 @@ async def overlay_text_on_photo(context: ContextTypes.DEFAULT_TYPE, file_id: str
     text_x = 20
     text_y = img.height - 60
     text_w, text_h = draw.textsize(text, font=font)
-    # Подложка
     box = [text_x - 10, text_y - 10, text_x + text_w + 10, text_y + text_h + 10]
     draw.rectangle(box, fill=(0, 0, 0, 128))
     draw.text((text_x, text_y), text, fill=(255, 255, 255, 255), font=font)
@@ -293,13 +293,8 @@ async def overlay_text_on_photo(context: ContextTypes.DEFAULT_TYPE, file_id: str
 from telegram import InputMediaPhoto
 
 async def send_photos_with_overlay_as_album(context: ContextTypes.DEFAULT_TYPE, chat_id: int, photo_overlays: list):
-    """
-    photo_overlays: список (file_id, подпись)
-    Отправляет альбомом (одним сообщением), наложив подпись на каждое фото.
-    """
     media_group = []
     album_caption = "Все фото с подписями"
-
     for i, (file_id, overlay_text) in enumerate(photo_overlays):
         processed_img = await overlay_text_on_photo(context, file_id, overlay_text)
         if i == 0:
@@ -307,11 +302,10 @@ async def send_photos_with_overlay_as_album(context: ContextTypes.DEFAULT_TYPE, 
         else:
             media_group.append(InputMediaPhoto(processed_img))
 
-    # Если фото > 10, надо разбивать, но здесь не реализовано
     await context.bot.send_media_group(chat_id=chat_id, media=media_group)
 
 # ------------------------------------------------------
-# 4) ЛОГИКА БОТА (остальные функции)
+# 4) ЛОГИКА БОТА (ОСТАЛЬНОЕ)
 # ------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[KeyboardButton("Новый замер")]]
@@ -673,7 +667,7 @@ async def check_measure(update: Update, context: ContextTypes.DEFAULT_TYPE):
     image_data = generate_measurement_image(client_data)
     caption_text = f"Имя: {name}\nТелефон: {phone}\nАдрес: {address}"
 
-    # Показываем итоговую таблицу на проверку (в личном чате)
+    # Показываем в личном чате итоговую таблицу
     await update.message.reply_photo(photo=image_data, caption=caption_text)
 
     keyboard = [[KeyboardButton("Редактировать замер")], [KeyboardButton("Завершить замер")]]
@@ -697,16 +691,12 @@ async def check_measure_response(update: Update, context: ContextTypes.DEFAULT_T
         return CHECK_MEASURE
 
 async def confirm_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    1) Отправляем таблицу в рабочий чат.
-    2) Для всех фото всех проёмов накладываем подписи и отправляем альбомом.
-    """
+    # Отправляем таблицу + фото (с подписями) в рабочий чат
     name = context.user_data.get("client_name", "")
     phone = context.user_data.get("client_phone", "")
     address = context.user_data.get("client_address", "")
     openings = context.user_data.get("openings", [])
 
-    # Генерация PNG
     client_data = {
         "client_name": name,
         "client_phone": phone,
@@ -720,26 +710,18 @@ async def confirm_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     image_data = generate_measurement_image(client_data)
     caption_text = f"Имя: {name}\nТелефон: {phone}\nАдрес: {address}"
+    await context.bot.send_photo(chat_id=TARGET_CHAT_ID, photo=image_data, caption=caption_text)
 
-    # 1) Отправляем таблицу в рабочий чат
-    await context.bot.send_photo(
-        chat_id=TARGET_CHAT_ID,
-        photo=image_data,
-        caption=caption_text
-    )
-
-    # 2) Список (file_id, подпись)
+    # Отправляем все фото альбомом
     photo_overlays = []
     for i, op in enumerate(openings, start=1):
         for j, file_id in enumerate(op["photos"], start=1):
             overlay_text = f"Фото {j} проёма #{i} ({op['room']})"
             photo_overlays.append((file_id, overlay_text))
 
-    # Отправляем альбомом (если есть фото)
     if photo_overlays:
         await send_photos_with_overlay_as_album(context, TARGET_CHAT_ID, photo_overlays)
 
-    # Возвращаемся в MENU
     keyboard = [[KeyboardButton("Новый замер")]]
     markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
@@ -749,14 +731,13 @@ async def confirm_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MENU
 
 # ------------------------------------------------------
-# РЕДАКТИРОВАНИЕ / УДАЛЕНИЕ (остальные функции)
+# РЕДАКТИРОВАНИЕ / УДАЛЕНИЕ
 # ------------------------------------------------------
 async def edit_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     openings = context.user_data.get("openings", [])
     if not openings:
         await update.message.reply_text("У вас нет добавленных проёмов.")
         return OPENING_MENU
-
     kb = []
     for i, op in enumerate(openings, start=1):
         kb.append([KeyboardButton(f"Проём {i}: {op['room']}")])
@@ -770,7 +751,6 @@ async def edit_choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     if len(parts) < 2 or parts[0] != "Проём":
         await update.message.reply_text("Неверный формат. Выберите проём из списка.")
         return EDIT_CHOICE
-
     number_str = parts[1].rstrip(":")
     try:
         number = int(number_str)
@@ -781,7 +761,6 @@ async def edit_choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     except:
         await update.message.reply_text("Неверный выбор проёма.")
         return EDIT_CHOICE
-
     context.user_data["edit_index"] = index
     fields = [
         "Комната", "Тип двери", "Размеры", "Полотно",
@@ -797,7 +776,6 @@ async def edit_field_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = update.message.text.lower()
     if text == "готово":
         return await opening_menu_return(update, context)
-
     field_map = {
         "комната": "room",
         "тип двери": "door_type",
@@ -811,11 +789,9 @@ async def edit_field_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "открывание": "opening",
         "комментарий": "comment"
     }
-
     if text not in field_map:
         await update.message.reply_text("Выберите поле из списка или 'Готово'.")
         return EDIT_FIELD
-
     context.user_data["edit_field"] = field_map[text]
     await update.message.reply_text(f"Введите новое значение для «{text}»:")
     return EDIT_VALUE
@@ -825,10 +801,8 @@ async def edit_value_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     index = context.user_data["edit_index"]
     field = context.user_data["edit_field"]
     openings = context.user_data["openings"]
-
     openings[index][field] = new_value
     await update.message.reply_text(f"Поле «{field}» обновлено на: {new_value}.")
-
     fields = [
         "Комната", "Тип двери", "Размеры", "Полотно",
         "Добор", "Кол-во доборов", "Наличники",
@@ -836,10 +810,7 @@ async def edit_value_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     ]
     kb = [[KeyboardButton(f)] for f in fields] + [[KeyboardButton("Готово")]]
     markup = ReplyKeyboardMarkup(kb, resize_keyboard=True)
-    await update.message.reply_text(
-        "Выберите поле для изменения ещё или нажмите «Готово»:",
-        reply_markup=markup
-    )
+    await update.message.reply_text("Выберите поле для изменения ещё или нажмите «Готово»:", reply_markup=markup)
     return EDIT_FIELD
 
 async def opening_menu_return(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -857,7 +828,6 @@ async def delete_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not openings:
         await update.message.reply_text("У вас нет добавленных проёмов.")
         return OPENING_MENU
-
     kb = []
     for i, op in enumerate(openings, start=1):
         kb.append([KeyboardButton(f"Проём {i}: {op['room']}")])
@@ -871,7 +841,6 @@ async def delete_choice_handler(update: Update, context: ContextTypes.DEFAULT_TY
     if len(parts) < 2 or parts[0] != "Проём":
         await update.message.reply_text("Неверный формат. Выберите проём из списка.")
         return DELETE_CHOICE
-
     number_str = parts[1].rstrip(":")
     try:
         number = int(number_str)
@@ -882,7 +851,6 @@ async def delete_choice_handler(update: Update, context: ContextTypes.DEFAULT_TY
     except:
         await update.message.reply_text("Неверный выбор проёма.")
         return DELETE_CHOICE
-
     context.user_data["delete_index"] = index
     proem = context.user_data["openings"][index]
     kb = [
