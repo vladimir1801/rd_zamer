@@ -1,0 +1,19 @@
+[phases.setup]
+# Указываем системные пакеты, необходимые для сборки Pillow
+nixPkgs = [
+  "zlib",
+  "libjpeg",
+  "libpng",
+  "freetype"
+]
+
+[phases.build]
+# Указываем команду сборки (установка зависимостей + запуск)
+# Обычно Railway сам вызовет "pip install -r requirements.txt",
+# поэтому можно не писать buildCommand.
+# Но если нужно явно:
+# buildCommand = "pip install --upgrade pip && pip install -r requirements.txt"
+
+[phases.start]
+# Команда для запуска бота
+start = "python bot.py"
