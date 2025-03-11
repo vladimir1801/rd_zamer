@@ -1,8 +1,8 @@
 import logging
 import io
+import os
 
 from PIL import Image, ImageDraw, ImageFont
-
 from telegram import (
     Update,
     ReplyKeyboardMarkup,
@@ -32,26 +32,32 @@ DONE_TEXT = "Готово"
 # ------------------------------------------------------
 # 1) СОСТОЯНИЯ
 # ------------------------------------------------------
-# Данные клиента
 MENU, GET_NAME, GET_PHONE, GET_ADDRESS = range(4)
 
-# Данные одного проёма (18 состояний: 4..21)
 (
-    ENTER_ROOM, ENTER_DOOR_TYPE, ENTER_DOOR_TYPE_CUSTOM, ENTER_DIMENSIONS, ENTER_CANVAS,
-    ENTER_DOBOR, ENTER_DOBOR_CUSTOM, ENTER_DOBOR_COUNT, ENTER_DOBOR_COUNT_CUSTOM,
-    ENTER_NALICHNIKI_CHOICE, ENTER_NALICHNIKI_CUSTOM,
+    ENTER_ROOM, 
+    ENTER_DOOR_TYPE, 
+    ENTER_DOOR_TYPE_CUSTOM, 
+    ENTER_DIMENSIONS, 
+    ENTER_CANVAS,
+    ENTER_DOBOR, 
+    ENTER_DOBOR_CUSTOM, 
+    ENTER_DOBOR_COUNT, 
+    ENTER_DOBOR_COUNT_CUSTOM,
+    ENTER_NALICHNIKI_CHOICE, 
+    ENTER_NALICHNIKI_CUSTOM,
     ENTER_THRESHOLD_CHOICE,
     ENTER_DEMONTAGE_CHOICE,
-    ENTER_OPENING_CHOICE, ENTER_OPENING_CUSTOM,
+    ENTER_OPENING_CHOICE, 
+    ENTER_OPENING_CUSTOM,
     ENTER_COMMENT,
     ENTER_PHOTOS,
     OPENING_MENU
-) = range(4, 22)
+) = range(4, 22)  # Значения 4..21 (18 штук)
 
-# Редактирование / удаление (5 состояний: 22..26)
 EDIT_CHOICE, EDIT_FIELD, EDIT_VALUE, DELETE_CHOICE, DELETE_CONFIRM = range(22, 27)
 
-# Новое состояние для проверки замера (CHECK_MEASURE)
+# Новое состояние для проверки замера
 CHECK_MEASURE = 27
 
 # ------------------------------------------------------
@@ -59,12 +65,14 @@ CHECK_MEASURE = 27
 # ------------------------------------------------------
 def generate_measurement_image(client_data: dict) -> io.BytesIO:
     """
-    Генерируем PNG-таблицу из 12 колонок:
+    Генерирует PNG-таблицу из 12 колонок:
       №, Комната, Тип двери, Размеры, Полотно,
       Добор, Кол-во доборов, Наличники,
       Порог, Демонтаж, Открывание, Комментарий
-    Над таблицей выводятся данные клиента: Имя, Телефон, Адрес.
-    Ширина колонки «Тип двери» установлена в 200 пикселей.
+
+    Над таблицей выводятся данные клиента (Имя, Телефон, Адрес).
+    Ширина колонки "Тип двери" установлена в 200 пикселей.
+    Отладочные сообщения выводятся для каждой строки, которую пытаемся отрисовать.
     """
     col_widths = [
         50,    # №
@@ -111,10 +119,16 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
         f"Адрес: {client_data.get('client_address', '')}\n"
     )
 
+    # Здесь пытаемся загрузить шрифт Montserrat.
+    # Если его нет, будет использован дефолтный, который не поддерживает кириллицу.
     try:
-        font = ImageFont.truetype("arial.ttf", 18)
-    except Exception:
+        font = ImageFont.truetype("Montserrat-Regular.ttf", 18)
+    except Exception as e:
+        print("Ошибка при загрузке шрифта Montserrat:", e)
         font = ImageFont.load_default()
+
+    # Для отладки: выводим список файлов в корне
+    print("DEBUG: Содержимое текущей папки:", os.listdir("."))
 
     temp_img = Image.new("RGB", (10, 10))
     draw_temp = ImageDraw.Draw(temp_img)
@@ -178,22 +192,27 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
     draw.text((margin, y_offset), client_info, font=font, fill="black")
     y_offset += info_block_height
 
+    # Здесь вставлены отладочные принты для каждой строки текста
     for row_idx, row_data in enumerate(rows):
         row_h = row_heights[row_idx]
         x_offset = margin
         for col_idx, _ in enumerate(row_data):
             w_col = col_widths[col_idx]
-            draw.rectangle([x_offset, y_offset, x_offset + w_col, y_offset + row_h],
-                           outline="black", width=1)
+            draw.rectangle(
+                [x_offset, y_offset, x_offset + w_col, y_offset + row_h],
+                outline="black",
+                width=1
+            )
             lines = row_lines[row_idx][col_idx]
             text_x = x_offset + cell_padding
             text_y = y_offset + cell_padding
 
-            _, line_h = get_text_size("A", font)
-            line_height_with_spacing = line_h + line_spacing
+            # Отладочная печать: вывод каждой строки, которую собираемся отрисовать
             for line in lines:
+                print("DEBUG: Отрисовываем строку:", repr(line))
                 draw.text((text_x, text_y), line, font=font, fill="black")
-                text_y += line_height_with_spacing
+                text_y += (line_h + line_spacing)
+
             x_offset += w_col
         y_offset += row_h
 
@@ -206,7 +225,6 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
 # ------------------------------------------------------
 # 3) ЛОГИКА БОТА
 # ------------------------------------------------------
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[KeyboardButton("Новый замер")]]
     markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -475,8 +493,7 @@ async def opening_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def ask_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[KeyboardButton(SKIP_TEXT)]]
     markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("Введите комментарий или нажмите «Пропустить»:",
-                                      reply_markup=markup)
+    await update.message.reply_text("Введите комментарий или нажмите «Пропустить»:", reply_markup=markup)
     return ENTER_COMMENT
 
 async def enter_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -487,9 +504,7 @@ async def enter_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["current_opening"]["comment"] = text
     keyboard = [[KeyboardButton(DONE_TEXT)], [KeyboardButton(SKIP_TEXT)]]
     markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text(
-        "Прикрепите любое количество фото (по одной). Когда закончите, нажмите «Готово».\nЕсли нет фото, нажмите «Пропустить».",
-        reply_markup=markup)
+    await update.message.reply_text("Прикрепите любое количество фото (по одной). Когда закончите, нажмите «Готово».\nЕсли нет фото, нажмите «Пропустить».", reply_markup=markup)
     return ENTER_PHOTOS
 
 async def enter_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -533,10 +548,9 @@ async def handle_opening_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         return OPENING_MENU
 
 # ------------------------------------------------------
-# Новый этап проверки замера (CHECK_MEASURE)
+# ЭТАП ПРОВЕРКИ: "Проверить и завершить"
 # ------------------------------------------------------
 async def check_measure(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Генерируем PNG-таблицу для проверки
     name = context.user_data.get("client_name", "")
     phone = context.user_data.get("client_phone", "")
     address = context.user_data.get("client_address", "")
@@ -554,7 +568,6 @@ async def check_measure(update: Update, context: ContextTypes.DEFAULT_TYPE):
     image_data = generate_measurement_image(client_data)
     caption_text = f"Имя: {name}\nТелефон: {phone}\nАдрес: {address}"
     await update.message.reply_photo(photo=image_data, caption=caption_text)
-    # Показать кнопки для проверки
     keyboard = [[KeyboardButton("Редактировать замер")], [KeyboardButton("Завершить замер")]]
     markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("Проверьте замер. Если всё правильно – нажмите «Завершить замер», иначе – «Редактировать замер».", reply_markup=markup)
@@ -571,7 +584,6 @@ async def check_measure_response(update: Update, context: ContextTypes.DEFAULT_T
         return CHECK_MEASURE
 
 async def confirm_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Отправляем итоговые данные в рабочий чат (TARGET_CHAT_ID)
     name = context.user_data.get("client_name", "")
     phone = context.user_data.get("client_phone", "")
     address = context.user_data.get("client_address", "")
@@ -589,434 +601,6 @@ async def confirm_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     image_data = generate_measurement_image(client_data)
     caption_text = f"Имя: {name}\nТелефон: {phone}\nАдрес: {address}"
     await context.bot.send_photo(chat_id=TARGET_CHAT_ID, photo=image_data, caption=caption_text)
-    for i, op in enumerate(openings, start=1):
-        for j, p in enumerate(op["photos"], start=1):
-            await context.bot.send_photo(
-                chat_id=TARGET_CHAT_ID,
-                photo=p,
-                caption=f"Фото {j} проёма #{i} ({op['room']})"
-            )
-    keyboard = [[KeyboardButton("Новый замер")]]
-    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("Замер успешно отправлен в рабочий чат. Вы можете начать новый замер.", reply_markup=markup)
-    return MENU
-
-# ------------------------------------------------------
-# Редактирование
-# ------------------------------------------------------
-async def edit_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    openings = context.user_data.get("openings", [])
-    if not openings:
-        await update.message.reply_text("У вас нет добавленных проёмов.")
-        return OPENING_MENU
-    kb = []
-    for i, op in enumerate(openings, start=1):
-        kb.append([KeyboardButton(f"Проём {i}: {op['room']}")])
-    markup = ReplyKeyboardMarkup(kb, resize_keyboard=True)
-    await update.message.reply_text("Выберите проём для редактирования:", reply_markup=markup)
-    return EDIT_CHOICE
-
-async def edit_choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    parts = text.split()
-    if len(parts) < 2 or parts[0] != "Проём":
-        await update.message.reply_text("Неверный формат. Выберите проём из списка.")
-        return EDIT_CHOICE
-    number_str = parts[1].rstrip(":")
-    try:
-        number = int(number_str)
-        index = number - 1
-        openings = context.user_data["openings"]
-        if index < 0 or index >= len(openings):
-            raise ValueError
-    except:
-        await update.message.reply_text("Неверный выбор проёма.")
-        return EDIT_CHOICE
-    context.user_data["edit_index"] = index
-    fields = [
-        "Комната", "Тип двери", "Размеры", "Полотно",
-        "Добор", "Кол-во доборов", "Наличники",
-        "Порог", "Демонтаж", "Открывание", "Комментарий"
-    ]
-    kb = [[KeyboardButton(f)] for f in fields] + [[KeyboardButton("Готово")]]
-    markup = ReplyKeyboardMarkup(kb, resize_keyboard=True)
-    await update.message.reply_text("Выберите поле для изменения:", reply_markup=markup)
-    return EDIT_FIELD
-
-async def edit_field_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.lower()
-    if text == "готово":
-        return await opening_menu_return(update, context)
-    field_map = {
-        "комната": "room",
-        "тип двери": "door_type",
-        "размеры": "dimensions",
-        "полотно": "canvas",
-        "добор": "dobor",
-        "кол-во доборов": "dobor_count",
-        "наличники": "nalichniki",
-        "порог": "threshold",
-        "демонтаж": "demontage",
-        "открывание": "opening",
-        "комментарий": "comment"
-    }
-    if text not in field_map:
-        await update.message.reply_text("Выберите поле из списка или 'Готово'.")
-        return EDIT_FIELD
-    context.user_data["edit_field"] = field_map[text]
-    await update.message.reply_text(f"Введите новое значение для «{text}»:")
-    return EDIT_VALUE
-
-async def edit_value_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    new_value = update.message.text
-    index = context.user_data["edit_index"]
-    field = context.user_data["edit_field"]
-    openings = context.user_data["openings"]
-    openings[index][field] = new_value
-    await update.message.reply_text(f"Поле «{field}» обновлено на: {new_value}.")
-    fields = [
-        "Комната", "Тип двери", "Размеры", "Полотно",
-        "Добор", "Кол-во доборов", "Наличники",
-        "Порог", "Демонтаж", "Открывание", "Комментарий"
-    ]
-    kb = [[KeyboardButton(f)] for f in fields] + [[KeyboardButton("Готово")]]
-    markup = ReplyKeyboardMarkup(kb, resize_keyboard=True)
-    await update.message.reply_text("Выберите поле для изменения ещё или нажмите «Готово»:", reply_markup=markup)
-    return EDIT_FIELD
-
-async def opening_menu_return(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [KeyboardButton("Следующий проём")],
-        [KeyboardButton("Редактировать проём"), KeyboardButton("Удалить проём")],
-        [KeyboardButton("Проверить и завершить")]
-    ]
-    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("Что делаем дальше?", reply_markup=markup)
-    return OPENING_MENU
-
-# ------------------------------------------------------
-# Удаление проёма
-# ------------------------------------------------------
-async def delete_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    openings = context.user_data.get("openings", [])
-    if not openings:
-        await update.message.reply_text("У вас нет добавленных проёмов.")
-        return OPENING_MENU
-    kb = []
-    for i, op in enumerate(openings, start=1):
-        kb.append([KeyboardButton(f"Проём {i}: {op['room']}")])
-    markup = ReplyKeyboardMarkup(kb, resize_keyboard=True)
-    await update.message.reply_text("Выберите проём для удаления:", reply_markup=markup)
-    return DELETE_CHOICE
-
-async def delete_choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    parts = text.split()
-    if len(parts) < 2 or parts[0] != "Проём":
-        await update.message.reply_text("Неверный формат. Выберите проём из списка.")
-        return DELETE_CHOICE
-    number_str = parts[1].rstrip(":")
-    try:
-        number = int(number_str)
-        index = number - 1
-        openings = context.user_data["openings"]
-        if index < 0 or index >= len(openings):
-            raise ValueError
-    except:
-        await update.message.reply_text("Неверный выбор проёма.")
-        return DELETE_CHOICE
-    context.user_data["delete_index"] = index
-    proem = context.user_data["openings"][index]
-    kb = [[KeyboardButton("Да, удалить"), KeyboardButton("Отмена")]]
-    markup = ReplyKeyboardMarkup(kb, resize_keyboard=True)
-    await update.message.reply_text(
-        f"Вы уверены, что хотите удалить «Проём {number}: {proem['room']}»?",
-        reply_markup=markup
-    )
-    return DELETE_CONFIRM
-
-async def delete_confirm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.lower()
-    if text == "да, удалить":
-        index = context.user_data["delete_index"]
-        proem = context.user_data["openings"].pop(index)
-        await update.message.reply_text(f"Проём «{proem['room']}» удалён.")
-    else:
-        await update.message.reply_text("Удаление отменено.")
-    return await opening_menu_return(update, context)
-
-# ------------------------------------------------------
-# ЭТАП ПРОВЕРКИ: отправляем итоговую PNG для проверки
-# ------------------------------------------------------
-async def check_measure(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    name = context.user_data.get("client_name", "")
-    phone = context.user_data.get("client_phone", "")
-    address = context.user_data.get("client_address", "")
-    openings = context.user_data.get("openings", [])
-    client_data = {
-        "client_name": name,
-        "client_phone": phone,
-        "client_address": address,
-        "openings": []
-    }
-    for op in openings:
-        copy_op = dict(op)
-        copy_op["photo"] = "есть" if copy_op["photos"] else "нет"
-        client_data["openings"].append(copy_op)
-    image_data = generate_measurement_image(client_data)
-    caption_text = f"Имя: {name}\nТелефон: {phone}\nАдрес: {address}"
-    await update.message.reply_photo(photo=image_data, caption=caption_text)
-    keyboard = [[KeyboardButton("Редактировать замер")], [KeyboardButton("Завершить замер")]]
-    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("Проверьте замер. Если всё правильно – нажмите «Завершить замер», иначе – «Редактировать замер».", reply_markup=markup)
-    return CHECK_MEASURE
-
-async def check_measure_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    if text == "Редактировать замер":
-        return await edit_choice(update, context)
-    elif text == "Завершить замер":
-        return await confirm_finish(update, context)
-    else:
-        await update.message.reply_text("Пожалуйста, выберите «Редактировать замер» или «Завершить замер».")
-        return CHECK_MEASURE
-
-async def confirm_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    name = context.user_data.get("client_name", "")
-    phone = context.user_data.get("client_phone", "")
-    address = context.user_data.get("client_address", "")
-    openings = context.user_data.get("openings", [])
-    client_data = {
-        "client_name": name,
-        "client_phone": phone,
-        "client_address": address,
-        "openings": []
-    }
-    for op in openings:
-        copy_op = dict(op)
-        copy_op["photo"] = "есть" if copy_op["photos"] else "нет"
-        client_data["openings"].append(copy_op)
-    image_data = generate_measurement_image(client_data)
-    caption_text = f"Имя: {name}\nТелефон: {phone}\nАдрес: {address}"
-    await context.bot.send_photo(
-        chat_id=TARGET_CHAT_ID,
-        photo=image_data,
-        caption=caption_text
-    )
-    for i, op in enumerate(openings, start=1):
-        for j, p in enumerate(op["photos"], start=1):
-            await context.bot.send_photo(
-                chat_id=TARGET_CHAT_ID,
-                photo=p,
-                caption=f"Фото {j} проёма #{i} ({op['room']})"
-            )
-    keyboard = [[KeyboardButton("Новый замер")]]
-    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("Замер успешно отправлен в рабочий чат. Вы можете начать новый замер.", reply_markup=markup)
-    return MENU
-
-# ------------------------------------------------------
-# Редактирование
-# ------------------------------------------------------
-async def edit_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    openings = context.user_data.get("openings", [])
-    if not openings:
-        await update.message.reply_text("У вас нет добавленных проёмов.")
-        return OPENING_MENU
-    kb = []
-    for i, op in enumerate(openings, start=1):
-        kb.append([KeyboardButton(f"Проём {i}: {op['room']}")])
-    markup = ReplyKeyboardMarkup(kb, resize_keyboard=True)
-    await update.message.reply_text("Выберите проём для редактирования:", reply_markup=markup)
-    return EDIT_CHOICE
-
-async def edit_choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    parts = text.split()
-    if len(parts) < 2 or parts[0] != "Проём":
-        await update.message.reply_text("Неверный формат. Выберите проём из списка.")
-        return EDIT_CHOICE
-    number_str = parts[1].rstrip(":")
-    try:
-        number = int(number_str)
-        index = number - 1
-        openings = context.user_data["openings"]
-        if index < 0 or index >= len(openings):
-            raise ValueError
-    except:
-        await update.message.reply_text("Неверный выбор проёма.")
-        return EDIT_CHOICE
-    context.user_data["edit_index"] = index
-    fields = [
-        "Комната", "Тип двери", "Размеры", "Полотно",
-        "Добор", "Кол-во доборов", "Наличники",
-        "Порог", "Демонтаж", "Открывание", "Комментарий"
-    ]
-    kb = [[KeyboardButton(f)] for f in fields] + [[KeyboardButton("Готово")]]
-    markup = ReplyKeyboardMarkup(kb, resize_keyboard=True)
-    await update.message.reply_text("Выберите поле для изменения:", reply_markup=markup)
-    return EDIT_FIELD
-
-async def edit_field_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.lower()
-    if text == "готово":
-        return await opening_menu_return(update, context)
-    field_map = {
-        "комната": "room",
-        "тип двери": "door_type",
-        "размеры": "dimensions",
-        "полотно": "canvas",
-        "добор": "dobor",
-        "кол-во доборов": "dobor_count",
-        "наличники": "nalichniki",
-        "порог": "threshold",
-        "демонтаж": "demontage",
-        "открывание": "opening",
-        "комментарий": "comment"
-    }
-    if text not in field_map:
-        await update.message.reply_text("Выберите поле из списка или 'Готово'.")
-        return EDIT_FIELD
-    context.user_data["edit_field"] = field_map[text]
-    await update.message.reply_text(f"Введите новое значение для «{text}»:")
-    return EDIT_VALUE
-
-async def edit_value_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    new_value = update.message.text
-    index = context.user_data["edit_index"]
-    field = context.user_data["edit_field"]
-    openings = context.user_data["openings"]
-    openings[index][field] = new_value
-    await update.message.reply_text(f"Поле «{field}» обновлено на: {new_value}.")
-    fields = [
-        "Комната", "Тип двери", "Размеры", "Полотно",
-        "Добор", "Кол-во доборов", "Наличники",
-        "Порог", "Демонтаж", "Открывание", "Комментарий"
-    ]
-    kb = [[KeyboardButton(f)] for f in fields] + [[KeyboardButton("Готово")]]
-    markup = ReplyKeyboardMarkup(kb, resize_keyboard=True)
-    await update.message.reply_text("Выберите поле для изменения ещё или нажмите «Готово»:", reply_markup=markup)
-    return EDIT_FIELD
-
-async def opening_menu_return(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [KeyboardButton("Следующий проём")],
-        [KeyboardButton("Редактировать проём"), KeyboardButton("Удалить проём")],
-        [KeyboardButton("Проверить и завершить")]
-    ]
-    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("Что делаем дальше?", reply_markup=markup)
-    return OPENING_MENU
-
-# ------------------------------------------------------
-# Удаление проёма
-# ------------------------------------------------------
-async def delete_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    openings = context.user_data.get("openings", [])
-    if not openings:
-        await update.message.reply_text("У вас нет добавленных проёмов.")
-        return OPENING_MENU
-    kb = []
-    for i, op in enumerate(openings, start=1):
-        kb.append([KeyboardButton(f"Проём {i}: {op['room']}")])
-    markup = ReplyKeyboardMarkup(kb, resize_keyboard=True)
-    await update.message.reply_text("Выберите проём для удаления:", reply_markup=markup)
-    return DELETE_CHOICE
-
-async def delete_choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    parts = text.split()
-    if len(parts) < 2 or parts[0] != "Проём":
-        await update.message.reply_text("Неверный формат. Выберите проём из списка.")
-        return DELETE_CHOICE
-    number_str = parts[1].rstrip(":")
-    try:
-        number = int(number_str)
-        index = number - 1
-        openings = context.user_data["openings"]
-        if index < 0 or index >= len(openings):
-            raise ValueError
-    except:
-        await update.message.reply_text("Неверный выбор проёма.")
-        return DELETE_CHOICE
-    context.user_data["delete_index"] = index
-    proem = context.user_data["openings"][index]
-    kb = [[KeyboardButton("Да, удалить"), KeyboardButton("Отмена")]]
-    markup = ReplyKeyboardMarkup(kb, resize_keyboard=True)
-    await update.message.reply_text(
-        f"Вы уверены, что хотите удалить «Проём {number}: {proem['room']}»?",
-        reply_markup=markup
-    )
-    return DELETE_CONFIRM
-
-async def delete_confirm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.lower()
-    if text == "да, удалить":
-        index = context.user_data["delete_index"]
-        proem = context.user_data["openings"].pop(index)
-        await update.message.reply_text(f"Проём «{proem['room']}» удалён.")
-    else:
-        await update.message.reply_text("Удаление отменено.")
-    return await opening_menu_return(update, context)
-
-# ------------------------------------------------------
-# ЭТАП ПРОВЕРКИ: кнопка "Проверить и завершить"
-# ------------------------------------------------------
-async def check_measure(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    name = context.user_data.get("client_name", "")
-    phone = context.user_data.get("client_phone", "")
-    address = context.user_data.get("client_address", "")
-    openings = context.user_data.get("openings", [])
-    client_data = {
-        "client_name": name,
-        "client_phone": phone,
-        "client_address": address,
-        "openings": []
-    }
-    for op in openings:
-        copy_op = dict(op)
-        copy_op["photo"] = "есть" if copy_op["photos"] else "нет"
-        client_data["openings"].append(copy_op)
-    image_data = generate_measurement_image(client_data)
-    caption_text = f"Имя: {name}\nТелефон: {phone}\nАдрес: {address}"
-    await update.message.reply_photo(photo=image_data, caption=caption_text)
-    keyboard = [[KeyboardButton("Редактировать замер")], [KeyboardButton("Завершить замер")]]
-    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("Проверьте замер. Если всё правильно – нажмите «Завершить замер», иначе – «Редактировать замер».", reply_markup=markup)
-    return CHECK_MEASURE
-
-async def check_measure_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    if text == "Редактировать замер":
-        return await edit_choice(update, context)
-    elif text == "Завершить замер":
-        return await confirm_finish(update, context)
-    else:
-        await update.message.reply_text("Пожалуйста, выберите «Редактировать замер» или «Завершить замер».")
-        return CHECK_MEASURE
-
-async def confirm_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    name = context.user_data.get("client_name", "")
-    phone = context.user_data.get("client_phone", "")
-    address = context.user_data.get("client_address", "")
-    openings = context.user_data.get("openings", [])
-    client_data = {
-        "client_name": name,
-        "client_phone": phone,
-        "client_address": address,
-        "openings": []
-    }
-    for op in openings:
-        copy_op = dict(op)
-        copy_op["photo"] = "есть" if copy_op["photos"] else "нет"
-        client_data["openings"].append(copy_op)
-    image_data = generate_measurement_image(client_data)
-    caption_text = f"Имя: {name}\nТелефон: {phone}\nАдрес: {address}"
-    await context.bot.send_photo(
-        chat_id=TARGET_CHAT_ID,
-        photo=image_data,
-        caption=caption_text
-    )
     for i, op in enumerate(openings, start=1):
         for j, p in enumerate(op["photos"], start=1):
             await context.bot.send_photo(
@@ -1125,217 +709,6 @@ async def opening_menu_return(update: Update, context: ContextTypes.DEFAULT_TYPE
 # ------------------------------------------------------
 # УДАЛЕНИЕ
 # ------------------------------------------------------
-async def delete_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    openings = context.user_data.get("openings", [])
-    if not openings:
-        await update.message.reply_text("У вас нет добавленных проёмов.")
-        return OPENING_MENU
-    kb = []
-    for i, op in enumerate(openings, start=1):
-        kb.append([KeyboardButton(f"Проём {i}: {op['room']}")])
-    markup = ReplyKeyboardMarkup(kb, resize_keyboard=True)
-    await update.message.reply_text("Выберите проём для удаления:", reply_markup=markup)
-    return DELETE_CHOICE
-
-async def delete_choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    parts = text.split()
-    if len(parts) < 2 or parts[0] != "Проём":
-        await update.message.reply_text("Неверный формат. Выберите проём из списка.")
-        return DELETE_CHOICE
-    number_str = parts[1].rstrip(":")
-    try:
-        number = int(number_str)
-        index = number - 1
-        openings = context.user_data["openings"]
-        if index < 0 or index >= len(openings):
-            raise ValueError
-    except:
-        await update.message.reply_text("Неверный выбор проёма.")
-        return DELETE_CHOICE
-    context.user_data["delete_index"] = index
-    proem = context.user_data["openings"][index]
-    kb = [[KeyboardButton("Да, удалить"), KeyboardButton("Отмена")]]
-    markup = ReplyKeyboardMarkup(kb, resize_keyboard=True)
-    await update.message.reply_text(
-        f"Вы уверены, что хотите удалить «Проём {number}: {proem['room']}»?",
-        reply_markup=markup
-    )
-    return DELETE_CONFIRM
-
-async def delete_confirm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.lower()
-    if text == "да, удалить":
-        index = context.user_data["delete_index"]
-        proem = context.user_data["openings"].pop(index)
-        await update.message.reply_text(f"Проём «{proem['room']}» удалён.")
-    else:
-        await update.message.reply_text("Удаление отменено.")
-    return await opening_menu_return(update, context)
-
-# ------------------------------------------------------
-# ЭТАП ПРОВЕРКИ: кнопка "Проверить и завершить"
-# ------------------------------------------------------
-async def check_measure(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    name = context.user_data.get("client_name", "")
-    phone = context.user_data.get("client_phone", "")
-    address = context.user_data.get("client_address", "")
-    openings = context.user_data.get("openings", [])
-    client_data = {
-        "client_name": name,
-        "client_phone": phone,
-        "client_address": address,
-        "openings": []
-    }
-    for op in openings:
-        copy_op = dict(op)
-        copy_op["photo"] = "есть" if copy_op["photos"] else "нет"
-        client_data["openings"].append(copy_op)
-    image_data = generate_measurement_image(client_data)
-    caption_text = f"Имя: {name}\nТелефон: {phone}\nАдрес: {address}"
-    await update.message.reply_photo(photo=image_data, caption=caption_text)
-    keyboard = [[KeyboardButton("Редактировать замер")], [KeyboardButton("Завершить замер")]]
-    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("Проверьте замер. Если всё правильно – нажмите «Завершить замер», иначе – «Редактировать замер».", reply_markup=markup)
-    return CHECK_MEASURE
-
-async def check_measure_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    if text == "Редактировать замер":
-        return await edit_choice(update, context)
-    elif text == "Завершить замер":
-        return await confirm_finish(update, context)
-    else:
-        await update.message.reply_text("Пожалуйста, выберите «Редактировать замер» или «Завершить замер».")
-        return CHECK_MEASURE
-
-async def confirm_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    name = context.user_data.get("client_name", "")
-    phone = context.user_data.get("client_phone", "")
-    address = context.user_data.get("client_address", "")
-    openings = context.user_data.get("openings", [])
-    client_data = {
-        "client_name": name,
-        "client_phone": phone,
-        "client_address": address,
-        "openings": []
-    }
-    for op in openings:
-        copy_op = dict(op)
-        copy_op["photo"] = "есть" if copy_op["photos"] else "нет"
-        client_data["openings"].append(copy_op)
-    image_data = generate_measurement_image(client_data)
-    caption_text = f"Имя: {name}\nТелефон: {phone}\nАдрес: {address}"
-    await context.bot.send_photo(
-        chat_id=TARGET_CHAT_ID,
-        photo=image_data,
-        caption=caption_text
-    )
-    for i, op in enumerate(openings, start=1):
-        for j, p in enumerate(op["photos"], start=1):
-            await context.bot.send_photo(
-                chat_id=TARGET_CHAT_ID,
-                photo=p,
-                caption=f"Фото {j} проёма #{i} ({op['room']})"
-            )
-    keyboard = [[KeyboardButton("Новый замер")]]
-    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("Замер успешно отправлен в рабочий чат. Вы можете начать новый замер.", reply_markup=markup)
-    return MENU
-
-# ------------------------------------------------------
-# РЕДАКТИРОВАНИЕ и УДАЛЕНИЕ (как раньше)
-# ------------------------------------------------------
-async def edit_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    openings = context.user_data.get("openings", [])
-    if not openings:
-        await update.message.reply_text("У вас нет добавленных проёмов.")
-        return OPENING_MENU
-    kb = []
-    for i, op in enumerate(openings, start=1):
-        kb.append([KeyboardButton(f"Проём {i}: {op['room']}")])
-    markup = ReplyKeyboardMarkup(kb, resize_keyboard=True)
-    await update.message.reply_text("Выберите проём для редактирования:", reply_markup=markup)
-    return EDIT_CHOICE
-
-async def edit_choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    parts = text.split()
-    if len(parts) < 2 or parts[0] != "Проём":
-        await update.message.reply_text("Неверный формат. Выберите проём из списка.")
-        return EDIT_CHOICE
-    number_str = parts[1].rstrip(":")
-    try:
-        number = int(number_str)
-        index = number - 1
-        openings = context.user_data["openings"]
-        if index < 0 or index >= len(openings):
-            raise ValueError
-    except:
-        await update.message.reply_text("Неверный выбор проёма.")
-        return EDIT_CHOICE
-    context.user_data["edit_index"] = index
-    fields = [
-        "Комната", "Тип двери", "Размеры", "Полотно",
-        "Добор", "Кол-во доборов", "Наличники",
-        "Порог", "Демонтаж", "Открывание", "Комментарий"
-    ]
-    kb = [[KeyboardButton(f)] for f in fields] + [[KeyboardButton("Готово")]]
-    markup = ReplyKeyboardMarkup(kb, resize_keyboard=True)
-    await update.message.reply_text("Выберите поле для изменения:", reply_markup=markup)
-    return EDIT_FIELD
-
-async def edit_field_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.lower()
-    if text == "готово":
-        return await opening_menu_return(update, context)
-    field_map = {
-        "комната": "room",
-        "тип двери": "door_type",
-        "размеры": "dimensions",
-        "полотно": "canvas",
-        "добор": "dobor",
-        "кол-во доборов": "dobor_count",
-        "наличники": "nalichniki",
-        "порог": "threshold",
-        "демонтаж": "demontage",
-        "открывание": "opening",
-        "комментарий": "comment"
-    }
-    if text not in field_map:
-        await update.message.reply_text("Выберите поле из списка или 'Готово'.")
-        return EDIT_FIELD
-    context.user_data["edit_field"] = field_map[text]
-    await update.message.reply_text(f"Введите новое значение для «{text}»:")
-    return EDIT_VALUE
-
-async def edit_value_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    new_value = update.message.text
-    index = context.user_data["edit_index"]
-    field = context.user_data["edit_field"]
-    openings = context.user_data["openings"]
-    openings[index][field] = new_value
-    await update.message.reply_text(f"Поле «{field}» обновлено на: {new_value}.")
-    fields = [
-        "Комната", "Тип двери", "Размеры", "Полотно",
-        "Добор", "Кол-во доборов", "Наличники",
-        "Порог", "Демонтаж", "Открывание", "Комментарий"
-    ]
-    kb = [[KeyboardButton(f)] for f in fields] + [[KeyboardButton("Готово")]]
-    markup = ReplyKeyboardMarkup(kb, resize_keyboard=True)
-    await update.message.reply_text("Выберите поле для изменения ещё или нажмите «Готово»:", reply_markup=markup)
-    return EDIT_FIELD
-
-async def opening_menu_return(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [KeyboardButton("Следующий проём")],
-        [KeyboardButton("Редактировать проём"), KeyboardButton("Удалить проём")],
-        [KeyboardButton("Проверить и завершить")]
-    ]
-    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("Что делаем дальше?", reply_markup=markup)
-    return OPENING_MENU
-
 async def delete_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     openings = context.user_data.get("openings", [])
     if not openings:
