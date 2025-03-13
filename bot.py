@@ -31,7 +31,7 @@ logging.basicConfig(
 # ПАРАМЕТРЫ БОТА
 # -----------------------------
 # Если у вас на Railway переменная называется TOKEN, то используйте это имя:
-TOKEN = os.environ.get("TOKEN")
+TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TARGET_CHAT_ID = -4743265113  # ID чата, куда отправляются замеры
 
 SKIP_TEXT = "Пропустить"
