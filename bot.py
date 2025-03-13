@@ -17,7 +17,8 @@ from telegram.ext import (
     MessageHandler,
     filters,
     ConversationHandler,
-    ContextTypes
+    ContextTypes,
+    Defaults
 )
 
 logging.basicConfig(
@@ -25,15 +26,18 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-TOKEN = "8186425754:AAGqiqPlftjkkYX5of0T1mzSEiziE1rt_tY"
-TARGET_CHAT_ID = -4743265113
+# -----------------------------
+# ПАРАМЕТРЫ БОТА
+# -----------------------------
+TOKEN = os.environ.get("TELEGRAM_TOKEN")  # Рекомендуется брать токен из переменных окружения
+TARGET_CHAT_ID = -4743265113  # Укажите ваш ID группы/чата
 
 SKIP_TEXT = "Пропустить"
 DONE_TEXT = "Готово"
 
-# ------------------------------------------------------
-# 1) СОСТОЯНИЯ
-# ------------------------------------------------------
+# -----------------------------
+# СОСТОЯНИЯ ДЛЯ ConversationHandler
+# -----------------------------
 MENU, GET_NAME, GET_PHONE, GET_ADDRESS = range(4)
 
 (
@@ -58,11 +62,10 @@ MENU, GET_NAME, GET_PHONE, GET_ADDRESS = range(4)
 ) = range(4, 22)
 
 EDIT_CHOICE, EDIT_FIELD, EDIT_VALUE, DELETE_CHOICE, DELETE_CONFIRM = range(22, 27)
-
 CHECK_MEASURE = 27
 
 # ------------------------------------------------------
-# 2) ФУНКЦИЯ ГЕНЕРАЦИИ PNG (ТАБЛИЦЫ) + ЛОГО
+# 1) ФУНКЦИЯ ГЕНЕРАЦИИ PNG (ТАБЛИЦЫ) + ЛОГО
 # ------------------------------------------------------
 def generate_measurement_image(client_data: dict) -> io.BytesIO:
     """
@@ -75,7 +78,6 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
     В правом верхнем углу — логотип, уменьшенный до 150 px по ширине.
     Под логотипом оставляем дополнительный отступ.
     """
-    # Ширина колонок
     col_widths = [
         50,   # №
         150,  # Комната
@@ -122,7 +124,6 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
         f"Адрес: {client_data.get('client_address', '')}\n"
     )
 
-    # Шрифт для текста
     try:
         font = ImageFont.truetype("Montserrat-Regular.ttf", 16)
     except Exception as e:
@@ -177,17 +178,15 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
     margin = 50
     table_width = sum(col_widths) + margin * 2
 
-    # Информация о клиенте (высота)
     info_lines = client_info.strip().split("\n")
     _, line_h = get_text_size("A", font)
     info_block_height = line_h * len(info_lines) + 40
 
-    # Загружаем логотип
-    logo_path = "Logo_rusdver.png"  # Имя файла
+    # Логотип
+    logo_path = "Logo_rusdver.png"
     try:
         logo = Image.open(logo_path).convert("RGBA")
-        # Масштабируем ширину до 150 px, пропорции сохраняются
-        logo.thumbnail((150, 9999))
+        logo.thumbnail((150, 9999))  # Уменьшаем ширину до 150 px
         logo_width, logo_height = logo.size
     except Exception as e:
         print("Ошибка при загрузке логотипа:", e)
@@ -195,29 +194,26 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
         logo_width = 0
         logo_height = 0
 
-    # Высота верхнего блока = макс(высота текста, высота лого)
     top_block_height = max(info_block_height, logo_height)
-    # Добавим доп. отступ (20 px) под логотип
-    top_block_height += 20
+    top_block_height += 20  # Дополнительный отступ
 
     table_height = sum(row_heights) + margin * 2
     total_height = top_block_height + table_height
 
-    # Создаём холст
     img = Image.new("RGB", (table_width, total_height), color="white")
     draw = ImageDraw.Draw(img)
 
-    # Рисуем текст клиента (левый верх)
+    # Текст клиента (левый верх)
     y_offset = 20
     draw.text((margin, y_offset), client_info, font=font, fill="black")
 
-    # Рисуем логотип (правый верх)
+    # Логотип (правый верх)
     if logo:
         x_logo = table_width - margin - logo_width
         y_logo = 20
         img.paste(logo, (x_logo, y_logo), logo)
 
-    # Отступ под верхний блок
+    # Отступ вниз
     y_offset = top_block_height
 
     # Рисуем таблицу
@@ -234,6 +230,7 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
             lines = row_lines[row_idx][col_idx]
             text_x = x_offset + cell_padding
             text_y = y_offset + cell_padding
+
             _, line_h = get_text_size("A", font)
             line_height_with_spacing = line_h + line_spacing
 
@@ -251,19 +248,15 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
     return bio
 
 # ------------------------------------------------------
-# 3) ФУНКЦИИ ДЛЯ ОТРАЖЕНИЯ ТЕКСТА НА ФОТО И АЛЬБОМА
+# 2) ФУНКЦИИ ДЛЯ ОТРАЖЕНИЯ ТЕКСТА НА ФОТО И АЛЬБОМА
 # ------------------------------------------------------
 FONT_PATH = "Montserrat-Regular.ttf"
 
 async def overlay_text_on_photo(context: ContextTypes.DEFAULT_TYPE, file_id: str, text: str) -> io.BytesIO:
-    """
-    Скачивает фото, накладывает подпись text и возвращает BytesIO
-    """
     temp_path = "temp_photo.jpg"
     telegram_file = await context.bot.get_file(file_id)
     await telegram_file.download_to_drive(temp_path)
 
-    from PIL import ImageDraw, ImageFont
     img = Image.open(temp_path).convert("RGBA")
     draw = ImageDraw.Draw(img)
 
@@ -305,7 +298,7 @@ async def send_photos_with_overlay_as_album(context: ContextTypes.DEFAULT_TYPE, 
     await context.bot.send_media_group(chat_id=chat_id, media=media_group)
 
 # ------------------------------------------------------
-# 4) ЛОГИКА БОТА (ОСТАЛЬНОЕ)
+# 3) ЛОГИКА БОТА
 # ------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[KeyboardButton("Новый замер")]]
@@ -358,11 +351,12 @@ async def start_opening(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "comment": "",
         "photos": []
     }
-    await update.message.reply_text("Введите название комнаты (например, 'Кухня'):")
+    await update.message.reply_text("Введите название комнаты (например, 'Кухня'):", reply_markup=ReplyKeyboardRemove())
     return ENTER_ROOM
 
 async def enter_room(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["current_opening"]["room"] = update.message.text
+
     door_types = [
         "Межкомнатная дверь",
         "Скрытая дверь",
@@ -382,16 +376,29 @@ async def enter_room(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def enter_door_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if text == "Иное":
-        await update.message.reply_text("Введите ваш вариант типа двери:")
+        # Если выбрано "Иное", переходим к enter_door_type_custom
+        await update.message.reply_text(
+            "Введите ваш вариант типа двери:",
+            reply_markup=ReplyKeyboardRemove()
+        )
         return ENTER_DOOR_TYPE_CUSTOM
     else:
+        # Сохраняем выбранный тип
         context.user_data["current_opening"]["door_type"] = text
-        await update.message.reply_text("Введите размеры проёма (высота, ширина, толщина стены):")
+        # Следующий вопрос без старой клавиатуры
+        await update.message.reply_text(
+            "Введите размеры проёма (высота, ширина, толщина стены):",
+            reply_markup=ReplyKeyboardRemove()
+        )
         return ENTER_DIMENSIONS
 
 async def enter_door_type_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Пользователь вводит кастомный тип двери
     context.user_data["current_opening"]["door_type"] = update.message.text
-    await update.message.reply_text("Введите размеры проёма (высота, ширина, толщина стены):")
+    await update.message.reply_text(
+        "Введите размеры проёма (высота, ширина, толщина стены):",
+        reply_markup=ReplyKeyboardRemove()
+    )
     return ENTER_DIMENSIONS
 
 async def enter_dimensions(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -411,7 +418,7 @@ async def enter_dimensions(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def enter_canvas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if text == "Иное":
-        await update.message.reply_text("Введите ваш вариант полотна:")
+        await update.message.reply_text("Введите ваш вариант полотна:", reply_markup=ReplyKeyboardRemove())
         return ENTER_CANVAS
     else:
         context.user_data["current_opening"]["canvas"] = text
@@ -428,7 +435,7 @@ async def ask_dobor(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def get_dobor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.lower()
     if text == "иное":
-        await update.message.reply_text("Введите ваш вариант добора:")
+        await update.message.reply_text("Введите ваш вариант добора:", reply_markup=ReplyKeyboardRemove())
         return ENTER_DOBOR_CUSTOM
     elif text in ["100 мм", "150 мм", "200 мм", "нет"]:
         context.user_data["current_opening"]["dobor"] = text
@@ -458,7 +465,7 @@ async def enter_dobor_custom(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def enter_dobor_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.lower()
     if text == "иное":
-        await update.message.reply_text("Введите ваш вариант кол-ва доборов:")
+        await update.message.reply_text("Введите ваш вариант кол-ва доборов:", reply_markup=ReplyKeyboardRemove())
         return ENTER_DOBOR_COUNT_CUSTOM
     elif text in ["1,5", "2,5", "3", "нет"]:
         context.user_data["current_opening"]["dobor_count"] = text
@@ -487,7 +494,7 @@ async def ask_nalichniki(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def enter_nalichniki_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.lower()
     if text == "иное":
-        await update.message.reply_text("Введите ваш вариант кол-ва наличников:")
+        await update.message.reply_text("Введите ваш вариант кол-ва наличников:", reply_markup=ReplyKeyboardRemove())
         return ENTER_NALICHNIKI_CUSTOM
     elif text in ["2,5", "5", "6", "нет"]:
         context.user_data["current_opening"]["nalichniki"] = text
@@ -559,7 +566,7 @@ async def ask_opening(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def opening_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if text == "Иное":
-        await update.message.reply_text("Введите ваш вариант открывания:")
+        await update.message.reply_text("Введите ваш вариант открывания:", reply_markup=ReplyKeyboardRemove())
         return ENTER_OPENING_CUSTOM
     elif text in ["Левое", "Правое", "Левое рев.", "Правое рев."]:
         context.user_data["current_opening"]["opening"] = text
@@ -691,7 +698,6 @@ async def check_measure_response(update: Update, context: ContextTypes.DEFAULT_T
         return CHECK_MEASURE
 
 async def confirm_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Отправляем таблицу + фото (с подписями) в рабочий чат
     name = context.user_data.get("client_name", "")
     phone = context.user_data.get("client_phone", "")
     address = context.user_data.get("client_address", "")
@@ -712,7 +718,6 @@ async def confirm_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     caption_text = f"Имя: {name}\nТелефон: {phone}\nАдрес: {address}"
     await context.bot.send_photo(chat_id=TARGET_CHAT_ID, photo=image_data, caption=caption_text)
 
-    # Отправляем все фото альбомом
     photo_overlays = []
     for i, op in enumerate(openings, start=1):
         for j, file_id in enumerate(op["photos"], start=1):
@@ -888,7 +893,14 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 def main():
-    app = Application.builder().token(TOKEN).build()
+    # Увеличиваем таймаут, чтобы избежать ошибок TimedOut при отправке больших фото
+    defaults = Defaults(
+        timeout=60,
+        read_timeout=60,
+        write_timeout=60
+    )
+
+    app = Application.builder().token(TOKEN).defaults(defaults).build()
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
