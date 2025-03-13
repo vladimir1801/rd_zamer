@@ -17,9 +17,10 @@ from telegram.ext import (
     MessageHandler,
     filters,
     ConversationHandler,
-    ContextTypes,
-    Defaults
+    ContextTypes
 )
+# ВАЖНО: Импортируем HTTPXRequest
+from telegram.request import HTTPXRequest
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -36,7 +37,7 @@ SKIP_TEXT = "Пропустить"
 DONE_TEXT = "Готово"
 
 # -----------------------------
-# СОСТОЯНИЯ ДЛЯ ConversationHandler
+# СОСТОЯНИЯ
 # -----------------------------
 MENU, GET_NAME, GET_PHONE, GET_ADDRESS = range(4)
 
@@ -893,14 +894,19 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 def main():
-    # Увеличиваем таймаут, чтобы избежать ошибок TimedOut при отправке больших фото
-    defaults = Defaults(
-        timeout=60,
-        read_timeout=60,
-        write_timeout=60
+    """
+    ВАЖНО: Вместо Defaults(timeout=..., read_timeout=..., write_timeout=...),
+    в PTB 20+ используем HTTPXRequest для настройки таймаутов.
+    """
+    # Настраиваем таймауты через HTTPXRequest
+    from telegram.request import HTTPXRequest
+    request = HTTPXRequest(
+        connect_timeout=60.0,  # время на установку соединения
+        read_timeout=60.0      # время на чтение ответа
+        # по умолчанию write_timeout=10.0, можно увеличить при необходимости
     )
 
-    app = Application.builder().token(TOKEN).defaults(defaults).build()
+    app = Application.builder().token(TOKEN).request(request).build()
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
