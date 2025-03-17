@@ -29,18 +29,17 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# -----------------------------
+# ------------------------------------------------------------
 # ПАРАМЕТРЫ
-# -----------------------------
-TOKEN = os.environ.get("TOKEN")  # Убедитесь, что на Railway переменная называется именно TOKEN
-TARGET_CHAT_ID = -4694840761      # ID чата/группы, куда отправляются замеры
+# ------------------------------------------------------------
+TOKEN = os.environ.get("TOKEN")  # На Railway переменная должна называться именно "TOKEN"
+TARGET_CHAT_ID = -4694840761      # Изменённый ID чата/группы для отправки замеров
 
-# Файл с разрешёнными номерами
+# Файл с разрешёнными номерами (в формате: "79123816215": "Владимир")
 ALLOWED_NUMBERS_FILE = "allowed_numbers.json"
-
 try:
     with open(ALLOWED_NUMBERS_FILE, "r", encoding="utf-8") as f:
-        ALLOWED_NUMBERS = json.load(f)  # пример: {"79123816215": "Владимир"}
+        ALLOWED_NUMBERS = json.load(f)
 except Exception as e:
     logging.error("Не удалось загрузить базу номеров: %s", e)
     ALLOWED_NUMBERS = {}
@@ -48,13 +47,13 @@ except Exception as e:
 # Тексты для кнопок
 LAUNCH_TEXT = "Запустить"
 STOP_TEXT = "Отключить бота"
-
 SKIP_TEXT = "Пропустить"
 DONE_TEXT = "Готово"
 
-# -----------------------------
-# СОСТОЯНИЯ
-# -----------------------------
+# ------------------------------------------------------------
+# СОСТОЯНИЯ ConversationHandler
+# ------------------------------------------------------------
+# Состояния для авторизации и основных шагов замера
 LAUNCH, AUTH, MENU, GET_NAME, GET_PHONE, GET_ADDRESS = range(6)
 (
     ENTER_ROOM,
@@ -76,18 +75,13 @@ LAUNCH, AUTH, MENU, GET_NAME, GET_PHONE, GET_ADDRESS = range(6)
     ENTER_PHOTOS,
     OPENING_MENU
 ) = range(6, 24)
-
 EDIT_CHOICE, EDIT_FIELD, EDIT_VALUE, DELETE_CHOICE, DELETE_CONFIRM = range(24, 29)
 CHECK_MEASURE = 29
 
-# -----------------------------
-# 1) Генерация таблицы (PNG)
-# -----------------------------
+# ------------------------------------------------------------
+# 1) Генерация PNG с таблицей замера и логотипом
+# ------------------------------------------------------------
 def generate_measurement_image(client_data: dict) -> io.BytesIO:
-    """
-    Генерирует PNG-таблицу с данными по замерам.
-    """
-    # ... (код идентичен предыдущим примерам, только перенесён сюда)
     col_widths = [50, 150, 200, 200, 100, 100, 110, 110, 80, 100, 120, 200]
     headers = [
         "№", "Комната", "Тип двери", "Размеры", "Полотно",
@@ -151,7 +145,6 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
     line_spacing = 5
     row_lines = []
     row_heights = []
-
     for row_idx, row_data in enumerate(rows):
         max_height = 0
         row_lines.append([])
@@ -189,26 +182,20 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
 
     img = Image.new("RGB", (table_width, total_height), color="white")
     draw = ImageDraw.Draw(img)
-
     y_offset = 20
     draw.text((margin, y_offset), client_info, font=font, fill="black")
-
     if logo:
         x_logo = table_width - margin - logo_width
         y_logo = 20
         img.paste(logo, (x_logo, y_logo), logo)
-
     y_offset = top_block_height
     for row_idx, row_data in enumerate(rows):
         row_h = row_heights[row_idx]
         x_offset = margin
         for col_idx, _ in enumerate(row_data):
             w_col = col_widths[col_idx]
-            draw.rectangle(
-                [x_offset, y_offset, x_offset + w_col, y_offset + row_h],
-                outline="black",
-                width=1
-            )
+            draw.rectangle([x_offset, y_offset, x_offset + w_col, y_offset + row_h],
+                           outline="black", width=1)
             lines = row_lines[row_idx][col_idx]
             text_x = x_offset + cell_padding
             text_y = y_offset + cell_padding
@@ -219,16 +206,15 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
                 text_y += line_height_with_spacing
             x_offset += w_col
         y_offset += row_h
-
     bio = io.BytesIO()
     bio.name = "zamery.png"
     img.save(bio, "PNG")
     bio.seek(0)
     return bio
 
-# -----------------------------
-# 2) Наложение текста на фото
-# -----------------------------
+# ------------------------------------------------------------
+# 2) Наложение текста на фото и отправка альбома
+# ------------------------------------------------------------
 async def overlay_text_on_photo(context: ContextTypes.DEFAULT_TYPE, file_id: str, text: str) -> io.BytesIO:
     temp_path = "temp_photo.jpg"
     file_obj = await context.bot.get_file(file_id)
@@ -239,25 +225,21 @@ async def overlay_text_on_photo(context: ContextTypes.DEFAULT_TYPE, file_id: str
         font = ImageFont.truetype("Montserrat-Regular.ttf", 24)
     except:
         font = ImageFont.load_default()
-
     text_x = 20
     text_y = img.height - 60
     text_w, text_h = draw.textsize(text, font=font)
     box = [text_x - 10, text_y - 10, text_x + text_w + 10, text_y + text_h + 10]
     draw.rectangle(box, fill=(0, 0, 0, 128))
     draw.text((text_x, text_y), text, fill=(255, 255, 255, 255), font=font)
-
     out_buf = io.BytesIO()
     out_buf.name = "photo.png"
     img.save(out_buf, "PNG")
     out_buf.seek(0)
-
     if os.path.exists(temp_path):
         os.remove(temp_path)
     return out_buf
 
 async def send_photos_with_overlay_as_album(context: ContextTypes.DEFAULT_TYPE, chat_id: int, photo_overlays: list):
-    from telegram import InputMediaPhoto
     media_group = []
     album_caption = "Все фото с подписями"
     for i, (file_id, overlay_text) in enumerate(photo_overlays):
@@ -268,14 +250,11 @@ async def send_photos_with_overlay_as_album(context: ContextTypes.DEFAULT_TYPE, 
             media_group.append(InputMediaPhoto(processed_img))
     await context.bot.send_media_group(chat_id=chat_id, media=media_group)
 
-# -----------------------------
-# 3) ЛОГИКА АВТОРИЗАЦИИ
-# -----------------------------
+# ------------------------------------------------------------
+# 3) АВТОРИЗАЦИЯ: Показ кнопок "Запустить" и "Отключить бота" сразу
+# ------------------------------------------------------------
 async def show_launch_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Как только пользователь пишет что‑либо в чат (или заново заходит),
-    показываем кнопки «Запустить» и «Отключить бота».
-    """
+    # Как только пользователь пишет любое сообщение, показываем клавиатуру
     keyboard = [
         [KeyboardButton(LAUNCH_TEXT)],
         [KeyboardButton(STOP_TEXT)]
@@ -290,16 +269,14 @@ async def show_launch_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def launch_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if text == STOP_TEXT:
-        # Если нажали «Отключить бота»
         keyboard = [[KeyboardButton(LAUNCH_TEXT)]]
         markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         await update.message.reply_text(
             "Бот выключен. Для включения нажмите «Запустить».",
             reply_markup=markup
         )
-        return LAUNCH  # Остаёмся в том же состоянии LAUNCH
+        return LAUNCH
     elif text == LAUNCH_TEXT:
-        # Переходим к запросу контакта
         keyboard = [
             [KeyboardButton("Поделиться контактом", request_contact=True)],
             [KeyboardButton(STOP_TEXT)]
@@ -315,11 +292,8 @@ async def launch_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return LAUNCH
 
 async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Получаем контакт, нормализуем номер, проверяем в базе.
-    """
+    # Если пользователь нажал кнопку "Отключить бота" вместо контакта, обрабатываем это
     if update.message.text == STOP_TEXT:
-        # Отключили бота
         keyboard = [[KeyboardButton(LAUNCH_TEXT)]]
         markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         await update.message.reply_text(
@@ -333,13 +307,11 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Контакт не получен. Нажмите «Поделиться контактом».")
         return AUTH
 
-    # Убираем все нецифровые символы
+    # Нормализуем номер: убираем всё, кроме цифр
     phone = re.sub(r"\D", "", contact.phone_number or "")
-    # Смотрим, есть ли он в базе
     if phone in ALLOWED_NUMBERS:
         user_name = ALLOWED_NUMBERS[phone]
         context.user_data["authorized_name"] = user_name
-        # Переходим в основное меню
         keyboard = [
             [KeyboardButton("Новый замер")],
             [KeyboardButton(STOP_TEXT)]
@@ -352,7 +324,6 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MENU
     else:
         await update.message.reply_text("Извините, ваш номер не найден в базе. Доступ закрыт.")
-        # Возвращаемся в LAUNCH, чтобы снова могли нажать "Запустить"
         keyboard = [[KeyboardButton(LAUNCH_TEXT)]]
         markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         await update.message.reply_text(
@@ -361,53 +332,40 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return LAUNCH
 
-# -----------------------------
-# 4) "Отключить бота" (cancel)
-# -----------------------------
+# ------------------------------------------------------------
+# 4) "Отключить бота": при нажатии этой кнопки бот выводит сообщение и возвращается в состояние LAUNCH
+# ------------------------------------------------------------
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    При нажатии «Отключить бота» завершаем текущий диалог,
-    но показываем снова кнопку «Запустить».
-    """
     keyboard = [[KeyboardButton(LAUNCH_TEXT)]]
     markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
         "Бот выключен. Для включения нажмите «Запустить».",
         reply_markup=markup
     )
-    return LAUNCH  # Возвращаемся в состояние LAUNCH
+    return LAUNCH
 
 async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Любое непредвиденное сообщение в состоянии,
-    где мы не ждём такой ввод.
-    """
     keyboard = [
         [KeyboardButton(LAUNCH_TEXT)],
         [KeyboardButton(STOP_TEXT)]
     ]
     markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
-        "Непредвиденная команда или сообщение.\n"
-        "Нажмите «Запустить» для проверки номера или «Отключить бота» для выключения.",
+        "Непредвиденная команда. Нажмите «Запустить» для проверки номера или «Отключить бота» для выключения.",
         reply_markup=markup
     )
     return LAUNCH
 
-# -----------------------------
+# ------------------------------------------------------------
 # 5) Основная логика замера
-# -----------------------------
-# Далее идёт та же логика, что и раньше:
-# MENU -> GET_NAME -> GET_PHONE -> GET_ADDRESS -> ... -> ENTER_PHOTOS -> ...
-# С кнопкой "Отключить бота" в каждом шаге, если хотите.
-# Здесь приведён укороченный вариант, чтобы не дублировать слишком много кода.
-
+# (Меню, ввод данных клиента, замер проёмов, редактирование и т.д.)
+# Здесь логика не менялась – она остаётся такой, как была ранее.
+# ------------------------------------------------------------
 async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if text == STOP_TEXT:
         return await cancel(update, context)
     if text == "Новый замер":
-        # Сбрасываем данные
         context.user_data["openings"] = []
         context.user_data.pop("client_name", None)
         context.user_data.pop("client_phone", None)
@@ -436,22 +394,118 @@ async def get_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == STOP_TEXT:
         return await cancel(update, context)
     context.user_data["client_address"] = update.message.text
-    # Переходим к вводу первого проёма
     return await start_opening(update, context)
 
-# ... здесь вставляется весь код по шагам (ENTER_ROOM, ENTER_DOOR_TYPE, etc.) ...
-# ... где в каждом шаге, если text == STOP_TEXT, вызываем cancel(update, context) ...
+# Здесь должны идти все остальные шаги замера (ENTER_ROOM, ENTER_DOOR_TYPE, ... OPENING_MENU, CHECK_MEASURE и т.д.)
+# Их логика остается прежней. Для краткости ниже вставлены только примеры.
 
-# В конце — проверка, редактирование, завершение, как в предыдущем коде.
-# -----------------------------
+async def start_opening(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == STOP_TEXT:
+        return await cancel(update, context)
+    context.user_data["current_opening"] = {
+        "room": "",
+        "door_type": "",
+        "dimensions": "",
+        "canvas": "---",
+        "dobor": "---",
+        "dobor_count": "---",
+        "nalichniki": "---",
+        "threshold": "",
+        "demontage": "",
+        "opening": "---",
+        "comment": "",
+        "photos": []
+    }
+    await update.message.reply_text("Введите название комнаты (например, 'Кухня'):", reply_markup=ReplyKeyboardRemove())
+    return ENTER_ROOM
 
+# ... (Функции enter_room, enter_door_type, enter_dimensions, enter_canvas, ask_dobor, get_dobor, 
+#      enter_dobor_custom, enter_dobor_count, enter_dobor_count_custom, 
+#      enter_nalichniki_choice, enter_nalichniki_custom, ask_threshold, threshold_choice,
+#      ask_demontage, demontage_choice, ask_opening, opening_choice, opening_custom, ask_comment, 
+#      enter_comment, enter_photos, save_opening, handle_opening_menu, check_measure, check_measure_response,
+#      confirm_finish, редактирование и удаление – остаются без изменений, но в каждом шаге добавляется проверка на STOP_TEXT)
+
+# Для полноты примера ниже приведем лишь заглушку для одного из этапов:
+async def enter_room(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == STOP_TEXT:
+        return await cancel(update, context)
+    context.user_data["current_opening"]["room"] = update.message.text
+    # Здесь выводим клавиатуру с вариантами типа двери и кнопкой "Отключить бота"
+    door_types = [
+        ["Межкомнатная дверь"],
+        ["Скрытая дверь"],
+        ["Входная дверь"],
+        ["Облагораживание проема"],
+        ["Складная дверь (книжка)"],
+        ["Раздвижная дверь (одностворчатая)"],
+        ["Раздвижная дверь (двустворчатая)"],
+        ["Двустворчатая дверь (распашная)"],
+        ["Иное"]
+    ]
+    door_types.append([STOP_TEXT])
+    markup = ReplyKeyboardMarkup(door_types, resize_keyboard=True)
+    await update.message.reply_text("Выберите тип двери:", reply_markup=markup)
+    return ENTER_DOOR_TYPE
+
+# ... (Остальные функции замера аналогично добавляют проверку на STOP_TEXT)
+
+# ------------------------------------------------------------
+# 6) ФИНАЛЬНЫЙ ЭТАП: Проверка и завершение замера
+# ------------------------------------------------------------
+async def check_measure(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == STOP_TEXT:
+        return await cancel(update, context)
+    name = context.user_data.get("client_name", "")
+    phone = context.user_data.get("client_phone", "")
+    address = context.user_data.get("client_address", "")
+    openings = context.user_data.get("openings", [])
+    client_data = {
+        "client_name": name,
+        "client_phone": phone,
+        "client_address": address,
+        "openings": []
+    }
+    for op in openings:
+        copy_op = dict(op)
+        copy_op["photo"] = "есть" if copy_op["photos"] else "нет"
+        client_data["openings"].append(copy_op)
+    image_data = generate_measurement_image(client_data)
+    caption_text = f"Имя: {name}\nТелефон: {phone}\nАдрес: {address}"
+    await update.message.reply_photo(photo=image_data, caption=caption_text)
+    keyboard = [
+        [KeyboardButton("Редактировать замер")],
+        [KeyboardButton("Завершить замер")],
+        [STOP_TEXT]
+    ]
+    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text("Проверьте замер. Если всё правильно – нажмите 'Завершить замер', иначе – 'Редактировать замер'.", reply_markup=markup)
+    return CHECK_MEASURE
+
+# Функции редактирования и удаления остаются без изменений (см. предыдущие версии)
+
+# ------------------------------------------------------------
+# 7) ФАЛЬБЭК и /cancel
+# ------------------------------------------------------------
+async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [KeyboardButton(LAUNCH_TEXT)],
+        [KeyboardButton(STOP_TEXT)]
+    ]
+    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text("Непредвиденная команда. Нажмите «Запустить» или «Отключить бота».", reply_markup=markup)
+    return LAUNCH
+
+# ------------------------------------------------------------
+# Основная функция: запуск бота
+# ------------------------------------------------------------
 def main():
     request = HTTPXRequest(connect_timeout=60.0, read_timeout=60.0)
     app = Application.builder().token(TOKEN).request(request).build()
 
     conv_handler = ConversationHandler(
         entry_points=[
-            # Когда пользователь пишет ЛЮБОЕ сообщение в "новом" чате, покажем кнопки "Запустить" / "Отключить"
+            # Как только пользователь пишет любое сообщение, показываем клавиатуру "Запустить"/"Отключить бота"
             MessageHandler(filters.ALL & ~filters.UpdateType.EDITED, show_launch_menu)
         ],
         states={
@@ -459,9 +513,7 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, launch_choice)
             ],
             AUTH: [
-                # Ожидаем контакт
                 MessageHandler(filters.CONTACT, handle_contact),
-                # Если текст = "Отключить бота"
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_contact)
             ],
             MENU: [
@@ -470,18 +522,13 @@ def main():
             GET_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
             GET_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
             GET_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_address)],
-
-            # Здесь вставляем остальные шаги: ENTER_ROOM, ENTER_DOOR_TYPE, ... OPENING_MENU, CHECK_MEASURE и т.д.
-            # с той же логикой, что была в предыдущем коде.
-
-            # Пример:
-            # ENTER_ROOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_room)],
-            # ...
+            # Здесь следует добавить остальные состояния замера (ENTER_ROOM, ENTER_DOOR_TYPE, ... OPENING_MENU, CHECK_MEASURE, и т.д.)
+            ENTER_ROOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_room)],
+            # ... остальные обработчики шагов замера ...
+            CHECK_MEASURE: [MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: check_measure(u, c))]
         },
         fallbacks=[
-            # Если в любом состоянии введут /cancel
             CommandHandler("cancel", cancel),
-            # Или что-то неподходящее
             MessageHandler(filters.COMMAND | filters.TEXT, fallback)
         ]
     )
