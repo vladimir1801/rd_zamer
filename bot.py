@@ -33,7 +33,7 @@ logging.basicConfig(
 # ПАРАМЕТРЫ
 # -----------------------------
 TOKEN = os.environ.get("TOKEN")  # Убедитесь, что на Railway переменная называется именно TOKEN
-TARGET_CHAT_ID = -4743265113      # ID чата/группы, куда отправляются замеры
+TARGET_CHAT_ID = -4694840761      # ID чата/группы, куда отправляются замеры
 
 # Файл с разрешёнными номерами
 ALLOWED_NUMBERS_FILE = "allowed_numbers.json"
