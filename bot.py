@@ -32,14 +32,13 @@ logging.basicConfig(
 # ------------------------------------------------------------
 # ПАРАМЕТРЫ
 # ------------------------------------------------------------
-TOKEN = os.environ.get("TOKEN")  # На Railway переменная должна называться именно "TOKEN"
-TARGET_CHAT_ID = -4694840761      # Изменённый ID чата/группы для отправки замеров
+TOKEN = os.environ.get("TOKEN")     # На Railway переменная называется "TOKEN"
+TARGET_CHAT_ID = -4694840761        # Укажите здесь ID вашей новой группы/чата
 
-# Файл с разрешёнными номерами (в формате: "79123816215": "Владимир")
 ALLOWED_NUMBERS_FILE = "allowed_numbers.json"
 try:
     with open(ALLOWED_NUMBERS_FILE, "r", encoding="utf-8") as f:
-        ALLOWED_NUMBERS = json.load(f)
+        ALLOWED_NUMBERS = json.load(f)  # Пример: {"79123816215": "Владимир"}
 except Exception as e:
     logging.error("Не удалось загрузить базу номеров: %s", e)
     ALLOWED_NUMBERS = {}
@@ -51,10 +50,10 @@ SKIP_TEXT = "Пропустить"
 DONE_TEXT = "Готово"
 
 # ------------------------------------------------------------
-# СОСТОЯНИЯ ConversationHandler
+# СОСТОЯНИЯ
 # ------------------------------------------------------------
-# Состояния для авторизации и основных шагов замера
 LAUNCH, AUTH, MENU, GET_NAME, GET_PHONE, GET_ADDRESS = range(6)
+
 (
     ENTER_ROOM,
     ENTER_DOOR_TYPE,
@@ -75,11 +74,12 @@ LAUNCH, AUTH, MENU, GET_NAME, GET_PHONE, GET_ADDRESS = range(6)
     ENTER_PHOTOS,
     OPENING_MENU
 ) = range(6, 24)
+
 EDIT_CHOICE, EDIT_FIELD, EDIT_VALUE, DELETE_CHOICE, DELETE_CONFIRM = range(24, 29)
 CHECK_MEASURE = 29
 
 # ------------------------------------------------------------
-# 1) Генерация PNG с таблицей замера и логотипом
+# 1) Генерация PNG-таблицы
 # ------------------------------------------------------------
 def generate_measurement_image(client_data: dict) -> io.BytesIO:
     col_widths = [50, 150, 200, 200, 100, 100, 110, 110, 80, 100, 120, 200]
@@ -88,6 +88,7 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
         "Добор", "Кол-во доборов", "Наличники",
         "Порог", "Демонтаж", "Открывание", "Комментарий"
     ]
+
     openings = client_data.get("openings", [])
     rows = [headers]
     for i, op in enumerate(openings, start=1):
@@ -145,6 +146,7 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
     line_spacing = 5
     row_lines = []
     row_heights = []
+
     for row_idx, row_data in enumerate(rows):
         max_height = 0
         row_lines.append([])
@@ -169,6 +171,7 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
 
     logo_path = "Logo_rusdver.png"
     try:
+        from PIL import Image
         logo = Image.open(logo_path).convert("RGBA")
         logo.thumbnail((150, 9999))
         logo_width, logo_height = logo.size
@@ -180,14 +183,18 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
     table_height = sum(row_heights) + margin * 2
     total_height = top_block_height + table_height
 
+    from PIL import ImageDraw
     img = Image.new("RGB", (table_width, total_height), color="white")
     draw = ImageDraw.Draw(img)
+
     y_offset = 20
     draw.text((margin, y_offset), client_info, font=font, fill="black")
+
     if logo:
         x_logo = table_width - margin - logo_width
         y_logo = 20
         img.paste(logo, (x_logo, y_logo), logo)
+
     y_offset = top_block_height
     for row_idx, row_data in enumerate(rows):
         row_h = row_heights[row_idx]
@@ -206,6 +213,7 @@ def generate_measurement_image(client_data: dict) -> io.BytesIO:
                 text_y += line_height_with_spacing
             x_offset += w_col
         y_offset += row_h
+
     bio = io.BytesIO()
     bio.name = "zamery.png"
     img.save(bio, "PNG")
@@ -219,27 +227,33 @@ async def overlay_text_on_photo(context: ContextTypes.DEFAULT_TYPE, file_id: str
     temp_path = "temp_photo.jpg"
     file_obj = await context.bot.get_file(file_id)
     await file_obj.download_to_drive(temp_path)
+
+    from PIL import Image, ImageDraw, ImageFont
     img = Image.open(temp_path).convert("RGBA")
     draw = ImageDraw.Draw(img)
     try:
         font = ImageFont.truetype("Montserrat-Regular.ttf", 24)
     except:
         font = ImageFont.load_default()
+
     text_x = 20
     text_y = img.height - 60
     text_w, text_h = draw.textsize(text, font=font)
     box = [text_x - 10, text_y - 10, text_x + text_w + 10, text_y + text_h + 10]
     draw.rectangle(box, fill=(0, 0, 0, 128))
     draw.text((text_x, text_y), text, fill=(255, 255, 255, 255), font=font)
+
     out_buf = io.BytesIO()
     out_buf.name = "photo.png"
     img.save(out_buf, "PNG")
     out_buf.seek(0)
+
     if os.path.exists(temp_path):
         os.remove(temp_path)
     return out_buf
 
 async def send_photos_with_overlay_as_album(context: ContextTypes.DEFAULT_TYPE, chat_id: int, photo_overlays: list):
+    from telegram import InputMediaPhoto
     media_group = []
     album_caption = "Все фото с подписями"
     for i, (file_id, overlay_text) in enumerate(photo_overlays):
@@ -251,10 +265,9 @@ async def send_photos_with_overlay_as_album(context: ContextTypes.DEFAULT_TYPE, 
     await context.bot.send_media_group(chat_id=chat_id, media=media_group)
 
 # ------------------------------------------------------------
-# 3) АВТОРИЗАЦИЯ: Показ кнопок "Запустить" и "Отключить бота" сразу
+# 3) Показ кнопок "Запустить" и "Отключить бота"
 # ------------------------------------------------------------
 async def show_launch_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Как только пользователь пишет любое сообщение, показываем клавиатуру
     keyboard = [
         [KeyboardButton(LAUNCH_TEXT)],
         [KeyboardButton(STOP_TEXT)]
@@ -292,7 +305,6 @@ async def launch_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return LAUNCH
 
 async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Если пользователь нажал кнопку "Отключить бота" вместо контакта, обрабатываем это
     if update.message.text == STOP_TEXT:
         keyboard = [[KeyboardButton(LAUNCH_TEXT)]]
         markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -307,7 +319,6 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Контакт не получен. Нажмите «Поделиться контактом».")
         return AUTH
 
-    # Нормализуем номер: убираем всё, кроме цифр
     phone = re.sub(r"\D", "", contact.phone_number or "")
     if phone in ALLOWED_NUMBERS:
         user_name = ALLOWED_NUMBERS[phone]
@@ -333,7 +344,7 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return LAUNCH
 
 # ------------------------------------------------------------
-# 4) "Отключить бота": при нажатии этой кнопки бот выводит сообщение и возвращается в состояние LAUNCH
+# 4) "Отключить бота"
 # ------------------------------------------------------------
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[KeyboardButton(LAUNCH_TEXT)]]
@@ -351,15 +362,14 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
-        "Непредвиденная команда. Нажмите «Запустить» для проверки номера или «Отключить бота» для выключения.",
+        "Непредвиденная команда или сообщение.\n"
+        "Нажмите «Запустить» или «Отключить бота».",
         reply_markup=markup
     )
     return LAUNCH
 
 # ------------------------------------------------------------
 # 5) Основная логика замера
-# (Меню, ввод данных клиента, замер проёмов, редактирование и т.д.)
-# Здесь логика не менялась – она остаётся такой, как была ранее.
 # ------------------------------------------------------------
 async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
@@ -394,14 +404,15 @@ async def get_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == STOP_TEXT:
         return await cancel(update, context)
     context.user_data["client_address"] = update.message.text
+    # Переходим к вводу первого проёма
     return await start_opening(update, context)
 
-# Здесь должны идти все остальные шаги замера (ENTER_ROOM, ENTER_DOOR_TYPE, ... OPENING_MENU, CHECK_MEASURE и т.д.)
-# Их логика остается прежней. Для краткости ниже вставлены только примеры.
-
 async def start_opening(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Если нажали "Отключить бота"
     if update.message.text == STOP_TEXT:
         return await cancel(update, context)
+
+    # Создаём структуру для текущего проёма
     context.user_data["current_opening"] = {
         "room": "",
         "door_type": "",
@@ -419,19 +430,10 @@ async def start_opening(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Введите название комнаты (например, 'Кухня'):", reply_markup=ReplyKeyboardRemove())
     return ENTER_ROOM
 
-# ... (Функции enter_room, enter_door_type, enter_dimensions, enter_canvas, ask_dobor, get_dobor, 
-#      enter_dobor_custom, enter_dobor_count, enter_dobor_count_custom, 
-#      enter_nalichniki_choice, enter_nalichniki_custom, ask_threshold, threshold_choice,
-#      ask_demontage, demontage_choice, ask_opening, opening_choice, opening_custom, ask_comment, 
-#      enter_comment, enter_photos, save_opening, handle_opening_menu, check_measure, check_measure_response,
-#      confirm_finish, редактирование и удаление – остаются без изменений, но в каждом шаге добавляется проверка на STOP_TEXT)
-
-# Для полноты примера ниже приведем лишь заглушку для одного из этапов:
 async def enter_room(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == STOP_TEXT:
         return await cancel(update, context)
     context.user_data["current_opening"]["room"] = update.message.text
-    # Здесь выводим клавиатуру с вариантами типа двери и кнопкой "Отключить бота"
     door_types = [
         ["Межкомнатная дверь"],
         ["Скрытая дверь"],
@@ -443,15 +445,325 @@ async def enter_room(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ["Двустворчатая дверь (распашная)"],
         ["Иное"]
     ]
+    # Добавляем кнопку "Отключить бота"
     door_types.append([STOP_TEXT])
     markup = ReplyKeyboardMarkup(door_types, resize_keyboard=True)
     await update.message.reply_text("Выберите тип двери:", reply_markup=markup)
     return ENTER_DOOR_TYPE
 
-# ... (Остальные функции замера аналогично добавляют проверку на STOP_TEXT)
+async def enter_door_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if text == STOP_TEXT:
+        return await cancel(update, context)
+    if text == "Иное":
+        await update.message.reply_text("Введите ваш вариант типа двери:", reply_markup=ReplyKeyboardRemove())
+        return ENTER_DOOR_TYPE_CUSTOM
+    else:
+        context.user_data["current_opening"]["door_type"] = text
+        await update.message.reply_text("Введите размеры проёма (высота, ширина, толщина стены):", reply_markup=ReplyKeyboardRemove())
+        return ENTER_DIMENSIONS
+
+async def enter_door_type_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == STOP_TEXT:
+        return await cancel(update, context)
+    context.user_data["current_opening"]["door_type"] = update.message.text
+    await update.message.reply_text("Введите размеры проёма (высота, ширина, толщина стены):", reply_markup=ReplyKeyboardRemove())
+    return ENTER_DIMENSIONS
+
+async def enter_dimensions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == STOP_TEXT:
+        return await cancel(update, context)
+    context.user_data["current_opening"]["dimensions"] = update.message.text
+    door_type = context.user_data["current_opening"]["door_type"]
+    if door_type == "Облагораживание проема":
+        context.user_data["current_opening"]["canvas"] = "---"
+        return await ask_dobor(update, context)
+    else:
+        canvas_variants = [
+            ["600"], ["700"], ["800"], ["Иное"]
+        ]
+        canvas_variants.append([STOP_TEXT])
+        markup = ReplyKeyboardMarkup(canvas_variants, resize_keyboard=True)
+        await update.message.reply_text("Введите рекомендуемое полотно:", reply_markup=markup)
+        return ENTER_CANVAS
+
+async def enter_canvas(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if text == STOP_TEXT:
+        return await cancel(update, context)
+    if text == "Иное":
+        await update.message.reply_text("Введите ваш вариант полотна:", reply_markup=ReplyKeyboardRemove())
+        return ENTER_CANVAS
+    else:
+        context.user_data["current_opening"]["canvas"] = text
+        return await ask_dobor(update, context)
+
+async def ask_dobor(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == STOP_TEXT:
+        return await cancel(update, context)
+    dobor_variants = [
+        ["100 мм"], ["150 мм"], ["200 мм"], ["нет"], ["Иное"]
+    ]
+    dobor_variants.append([STOP_TEXT])
+    markup = ReplyKeyboardMarkup(dobor_variants, resize_keyboard=True)
+    await update.message.reply_text("Введите ширину добора:", reply_markup=markup)
+    return ENTER_DOBOR
+
+async def get_dobor(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.lower()
+    if text == STOP_TEXT.lower():
+        return await cancel(update, context)
+    if text == "иное":
+        await update.message.reply_text("Введите ваш вариант добора:", reply_markup=ReplyKeyboardRemove())
+        return ENTER_DOBOR_CUSTOM
+    elif text in ["100 мм", "150 мм", "200 мм", "нет"]:
+        context.user_data["current_opening"]["dobor"] = text
+        if text == "нет":
+            context.user_data["current_opening"]["dobor_count"] = "---"
+            return await ask_nalichniki(update, context)
+        else:
+            dobor_count_variants = [
+                ["1,5"], ["2,5"], ["3"], ["нет"], ["Иное"]
+            ]
+            dobor_count_variants.append([STOP_TEXT])
+            markup = ReplyKeyboardMarkup(dobor_count_variants, resize_keyboard=True)
+            await update.message.reply_text("Введите кол-во доборов:", reply_markup=markup)
+            return ENTER_DOBOR_COUNT
+    else:
+        await update.message.reply_text("Выберите один из вариантов или 'Иное'.")
+        return ENTER_DOBOR
+
+async def enter_dobor_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == STOP_TEXT:
+        return await cancel(update, context)
+    context.user_data["current_opening"]["dobor"] = update.message.text
+    dobor_count_variants = [
+        ["1,5"], ["2,5"], ["3"], ["нет"], ["Иное"]
+    ]
+    dobor_count_variants.append([STOP_TEXT])
+    markup = ReplyKeyboardMarkup(dobor_count_variants, resize_keyboard=True)
+    await update.message.reply_text("Введите кол-во доборов:", reply_markup=markup)
+    return ENTER_DOBOR_COUNT
+
+async def enter_dobor_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.lower()
+    if text == STOP_TEXT.lower():
+        return await cancel(update, context)
+    if text == "иное":
+        await update.message.reply_text("Введите ваш вариант кол-ва доборов:", reply_markup=ReplyKeyboardRemove())
+        return ENTER_DOBOR_COUNT_CUSTOM
+    elif text in ["1,5", "2,5", "3", "нет"]:
+        context.user_data["current_opening"]["dobor_count"] = text
+        return await ask_nalichniki(update, context)
+    else:
+        await update.message.reply_text("Выберите один из вариантов или 'Иное'.")
+        return ENTER_DOBOR_COUNT
+
+async def enter_dobor_count_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == STOP_TEXT:
+        return await cancel(update, context)
+    context.user_data["current_opening"]["dobor_count"] = update.message.text
+    return await ask_nalichniki(update, context)
+
+async def ask_nalichniki(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    door_type = context.user_data["current_opening"]["door_type"]
+    if door_type in ["Скрытая дверь", "Входная дверь"]:
+        context.user_data["current_opening"]["nalichniki"] = "---"
+        return await ask_threshold(update, context)
+    else:
+        variants = [
+            ["2,5"], ["5"], ["5,5"], ["6"], ["нет"], ["Иное"]
+        ]
+        variants.append([STOP_TEXT])
+        markup = ReplyKeyboardMarkup(variants, resize_keyboard=True)
+        await update.message.reply_text("Введите кол-во наличников:", reply_markup=markup)
+        return ENTER_NALICHNIKI_CHOICE
+
+async def enter_nalichniki_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.lower()
+    if text == STOP_TEXT.lower():
+        return await cancel(update, context)
+    if text == "иное":
+        await update.message.reply_text("Введите ваш вариант кол-ва наличников:", reply_markup=ReplyKeyboardRemove())
+        return ENTER_NALICHNIKI_CUSTOM
+    elif text in ["2,5", "5", "5,5", "6", "нет"]:
+        context.user_data["current_opening"]["nalichniki"] = text
+        return await ask_threshold(update, context)
+    else:
+        await update.message.reply_text("Выберите один из вариантов или 'Иное'.")
+        return ENTER_NALICHNIKI_CHOICE
+
+async def enter_nalichniki_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == STOP_TEXT:
+        return await cancel(update, context)
+    context.user_data["current_opening"]["nalichniki"] = update.message.text
+    return await ask_threshold(update, context)
+
+async def ask_threshold(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    door_type = context.user_data["current_opening"]["door_type"]
+    if door_type == "Облагораживание проема":
+        context.user_data["current_opening"]["threshold"] = "---"
+        return await ask_demontage(update, context)
+    else:
+        btns = [
+            ["да"], ["нет"],
+            [STOP_TEXT]
+        ]
+        markup = ReplyKeyboardMarkup(btns, resize_keyboard=True)
+        await update.message.reply_text("Наличие порога?", reply_markup=markup)
+        return ENTER_THRESHOLD_CHOICE
+
+async def threshold_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.lower()
+    if text == STOP_TEXT.lower():
+        return await cancel(update, context)
+    if text in ["да", "нет"]:
+        context.user_data["current_opening"]["threshold"] = text
+        return await ask_demontage(update, context)
+    else:
+        await update.message.reply_text("Выберите 'да' или 'нет'.")
+        return ENTER_THRESHOLD_CHOICE
+
+async def ask_demontage(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    btns = [
+        ["да"], ["нет"],
+        [STOP_TEXT]
+    ]
+    markup = ReplyKeyboardMarkup(btns, resize_keyboard=True)
+    await update.message.reply_text("Демонтаж старой двери?", reply_markup=markup)
+    return ENTER_DEMONTAGE_CHOICE
+
+async def demontage_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.lower()
+    if text == STOP_TEXT.lower():
+        return await cancel(update, context)
+    if text not in ["да", "нет"]:
+        await update.message.reply_text("Выберите 'да' или 'нет'.")
+        return ENTER_DEMONTAGE_CHOICE
+    context.user_data["current_opening"]["demontage"] = text
+    return await ask_opening(update, context)
+
+async def ask_opening(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    door_type = context.user_data["current_opening"]["door_type"]
+    skip_list = [
+        "Облагораживание проема",
+        "Складная дверь (книжка)",
+        "Раздвижная дверь (одностворчатая)",
+        "Раздвижная дверь (двустворчатая)",
+        "Двустворчатая дверь (распашная)"
+    ]
+    if door_type in skip_list:
+        context.user_data["current_opening"]["opening"] = "---"
+        return await ask_comment(update, context)
+    else:
+        variants = [
+            ["Левое", "Правое"],
+            ["Левое рев.", "Правое рев."],
+            ["Иное"]
+        ]
+        variants.append([STOP_TEXT])
+        markup = ReplyKeyboardMarkup(variants, resize_keyboard=True)
+        await update.message.reply_text("Введите открывание:", reply_markup=markup)
+        return ENTER_OPENING_CHOICE
+
+async def opening_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if text == STOP_TEXT:
+        return await cancel(update, context)
+    if text == "Иное":
+        await update.message.reply_text("Введите ваш вариант открывания:", reply_markup=ReplyKeyboardRemove())
+        return ENTER_OPENING_CUSTOM
+    elif text in ["Левое", "Правое", "Левое рев.", "Правое рев."]:
+        context.user_data["current_opening"]["opening"] = text
+        return await ask_comment(update, context)
+    else:
+        await update.message.reply_text("Выберите один из вариантов или 'Иное'.")
+        return ENTER_OPENING_CHOICE
+
+async def opening_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == STOP_TEXT:
+        return await cancel(update, context)
+    context.user_data["current_opening"]["opening"] = update.message.text
+    return await ask_comment(update, context)
+
+async def ask_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [KeyboardButton(SKIP_TEXT)],
+        [STOP_TEXT]
+    ]
+    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text("Введите комментарий или нажмите «Пропустить»:", reply_markup=markup)
+    return ENTER_COMMENT
+
+async def enter_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if text == STOP_TEXT:
+        return await cancel(update, context)
+    if text == SKIP_TEXT:
+        context.user_data["current_opening"]["comment"] = ""
+    else:
+        context.user_data["current_opening"]["comment"] = text
+    keyboard = [
+        [KeyboardButton(DONE_TEXT)],
+        [KeyboardButton(SKIP_TEXT)],
+        [STOP_TEXT]
+    ]
+    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text(
+        "Прикрепите любое количество фото (по одной). Когда закончите, нажмите «Готово».\nЕсли нет фото, нажмите «Пропустить».",
+        reply_markup=markup
+    )
+    return ENTER_PHOTOS
+
+async def enter_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if text == STOP_TEXT:
+        return await cancel(update, context)
+    if text in [SKIP_TEXT, DONE_TEXT]:
+        return await save_opening(update, context)
+    if update.message.photo:
+        file_id = update.message.photo[-1].file_id
+        context.user_data["current_opening"]["photos"].append(file_id)
+        await update.message.reply_text("Фото сохранено. Можете отправить ещё, или нажмите «Готово».")
+        return ENTER_PHOTOS
+    else:
+        await update.message.reply_text("Отправьте фото, либо нажмите «Готово» или «Пропустить».")
+        return ENTER_PHOTOS
+
+async def save_opening(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == STOP_TEXT:
+        return await cancel(update, context)
+    current = context.user_data["current_opening"]
+    context.user_data.setdefault("openings", []).append(current)
+
+    keyboard = [
+        [KeyboardButton("Следующий проём")],
+        [KeyboardButton("Редактировать проём"), KeyboardButton("Удалить проём")],
+        [KeyboardButton("Проверить и завершить")],
+        [STOP_TEXT]
+    ]
+    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text("Проём сохранён. Что делаем дальше?", reply_markup=markup)
+    return OPENING_MENU
+
+async def handle_opening_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if text == STOP_TEXT:
+        return await cancel(update, context)
+    if text == "Следующий проём":
+        return await start_opening(update, context)
+    elif text == "Редактировать проём":
+        return await edit_choice(update, context)
+    elif text == "Удалить проём":
+        return await delete_choice(update, context)
+    elif text == "Проверить и завершить":
+        return await check_measure(update, context)
+    else:
+        await update.message.reply_text("Выберите: «Следующий проём», «Редактировать проём», «Удалить проём» или «Проверить и завершить».")
+        return OPENING_MENU
 
 # ------------------------------------------------------------
-# 6) ФИНАЛЬНЫЙ ЭТАП: Проверка и завершение замера
+# 6) Проверка и завершение
 # ------------------------------------------------------------
 async def check_measure(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == STOP_TEXT:
@@ -470,34 +782,219 @@ async def check_measure(update: Update, context: ContextTypes.DEFAULT_TYPE):
         copy_op = dict(op)
         copy_op["photo"] = "есть" if copy_op["photos"] else "нет"
         client_data["openings"].append(copy_op)
+
     image_data = generate_measurement_image(client_data)
     caption_text = f"Имя: {name}\nТелефон: {phone}\nАдрес: {address}"
     await update.message.reply_photo(photo=image_data, caption=caption_text)
+
     keyboard = [
         [KeyboardButton("Редактировать замер")],
         [KeyboardButton("Завершить замер")],
         [STOP_TEXT]
     ]
     markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("Проверьте замер. Если всё правильно – нажмите 'Завершить замер', иначе – 'Редактировать замер'.", reply_markup=markup)
+    await update.message.reply_text(
+        "Проверьте замер. Если всё правильно – нажмите «Завершить замер», иначе – «Редактировать замер».",
+        reply_markup=markup
+    )
     return CHECK_MEASURE
 
-# Функции редактирования и удаления остаются без изменений (см. предыдущие версии)
+async def check_measure_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if text == STOP_TEXT:
+        return await cancel(update, context)
+    if text == "Редактировать замер":
+        return await edit_choice(update, context)
+    elif text == "Завершить замер":
+        return await confirm_finish(update, context)
+    else:
+        await update.message.reply_text("Пожалуйста, выберите «Редактировать замер» или «Завершить замер».")
+        return CHECK_MEASURE
+
+async def confirm_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == STOP_TEXT:
+        return await cancel(update, context)
+    name = context.user_data.get("client_name", "")
+    phone = context.user_data.get("client_phone", "")
+    address = context.user_data.get("client_address", "")
+    openings = context.user_data.get("openings", [])
+    client_data = {
+        "client_name": name,
+        "client_phone": phone,
+        "client_address": address,
+        "openings": []
+    }
+    for op in openings:
+        copy_op = dict(op)
+        copy_op["photo"] = "есть" if copy_op["photos"] else "нет"
+        client_data["openings"].append(copy_op)
+
+    image_data = generate_measurement_image(client_data)
+    caption_text = f"Имя: {name}\nТелефон: {phone}\nАдрес: {address}"
+    # Отправляем финальную таблицу в рабочий чат
+    await context.bot.send_photo(chat_id=TARGET_CHAT_ID, photo=image_data, caption=caption_text)
+
+    # Отправляем фото с подписями альбомом
+    photo_overlays = []
+    for i, op in enumerate(openings, start=1):
+        for j, file_id in enumerate(op["photos"], start=1):
+            overlay_text = f"Фото {j} проёма #{i} ({op['room']})"
+            photo_overlays.append((file_id, overlay_text))
+
+    if photo_overlays:
+        await send_photos_with_overlay_as_album(context, TARGET_CHAT_ID, photo_overlays)
+
+    keyboard = [[KeyboardButton("Новый замер")]]
+    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text("Замер успешно отправлен в рабочий чат. Вы можете начать новый замер.", reply_markup=markup)
+    return MENU
 
 # ------------------------------------------------------------
-# 7) ФАЛЬБЭК и /cancel
+# 7) Редактирование / Удаление проёмов
 # ------------------------------------------------------------
-async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def edit_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    openings = context.user_data.get("openings", [])
+    if not openings:
+        await update.message.reply_text("У вас нет добавленных проёмов.")
+        return OPENING_MENU
+    kb = []
+    for i, op in enumerate(openings, start=1):
+        kb.append([KeyboardButton(f"Проём {i}: {op['room']}")])
+    markup = ReplyKeyboardMarkup(kb, resize_keyboard=True)
+    await update.message.reply_text("Выберите проём для редактирования:", reply_markup=markup)
+    return EDIT_CHOICE
+
+async def edit_choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    parts = text.split()
+    if len(parts) < 2 or parts[0] != "Проём":
+        await update.message.reply_text("Неверный формат. Выберите проём из списка.")
+        return EDIT_CHOICE
+    number_str = parts[1].rstrip(":")
+    try:
+        number = int(number_str)
+        index = number - 1
+        openings = context.user_data["openings"]
+        if index < 0 or index >= len(openings):
+            raise ValueError
+    except:
+        await update.message.reply_text("Неверный выбор проёма.")
+        return EDIT_CHOICE
+    context.user_data["edit_index"] = index
+    fields = [
+        "Комната", "Тип двери", "Размеры", "Полотно",
+        "Добор", "Кол-во доборов", "Наличники",
+        "Порог", "Демонтаж", "Открывание", "Комментарий"
+    ]
+    kb = [[KeyboardButton(f)] for f in fields] + [[KeyboardButton("Готово")]]
+    markup = ReplyKeyboardMarkup(kb, resize_keyboard=True)
+    await update.message.reply_text("Выберите поле для изменения:", reply_markup=markup)
+    return EDIT_FIELD
+
+async def edit_field_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.lower()
+    if text == "готово":
+        return await opening_menu_return(update, context)
+    field_map = {
+        "комната": "room",
+        "тип двери": "door_type",
+        "размеры": "dimensions",
+        "полотно": "canvas",
+        "добор": "dobor",
+        "кол-во доборов": "dobor_count",
+        "наличники": "nalichniki",
+        "порог": "threshold",
+        "демонтаж": "demontage",
+        "открывание": "opening",
+        "комментарий": "comment"
+    }
+    if text not in field_map:
+        await update.message.reply_text("Выберите поле из списка или 'Готово'.")
+        return EDIT_FIELD
+    context.user_data["edit_field"] = field_map[text]
+    await update.message.reply_text(f"Введите новое значение для «{text}»:")
+    return EDIT_VALUE
+
+async def edit_value_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    new_value = update.message.text
+    index = context.user_data["edit_index"]
+    field = context.user_data["edit_field"]
+    openings = context.user_data["openings"]
+    openings[index][field] = new_value
+    await update.message.reply_text(f"Поле «{field}» обновлено на: {new_value}.")
+    fields = [
+        "Комната", "Тип двери", "Размеры", "Полотно",
+        "Добор", "Кол-во доборов", "Наличники",
+        "Порог", "Демонтаж", "Открывание", "Комментарий"
+    ]
+    kb = [[KeyboardButton(f)] for f in fields] + [[KeyboardButton("Готово")]]
+    markup = ReplyKeyboardMarkup(kb, resize_keyboard=True)
+    await update.message.reply_text(
+        "Выберите поле для изменения ещё или нажмите «Готово»:",
+        reply_markup=markup
+    )
+    return EDIT_FIELD
+
+async def opening_menu_return(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [KeyboardButton(LAUNCH_TEXT)],
-        [KeyboardButton(STOP_TEXT)]
+        [KeyboardButton("Следующий проём")],
+        [KeyboardButton("Редактировать проём"), KeyboardButton("Удалить проём")],
+        [KeyboardButton("Проверить и завершить")]
     ]
     markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("Непредвиденная команда. Нажмите «Запустить» или «Отключить бота».", reply_markup=markup)
-    return LAUNCH
+    await update.message.reply_text("Что делаем дальше?", reply_markup=markup)
+    return OPENING_MENU
+
+async def delete_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    openings = context.user_data.get("openings", [])
+    if not openings:
+        await update.message.reply_text("У вас нет добавленных проёмов.")
+        return OPENING_MENU
+    kb = []
+    for i, op in enumerate(openings, start=1):
+        kb.append([KeyboardButton(f"Проём {i}: {op['room']}")])
+    markup = ReplyKeyboardMarkup(kb, resize_keyboard=True)
+    await update.message.reply_text("Выберите проём для удаления:", reply_markup=markup)
+    return DELETE_CHOICE
+
+async def delete_choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    parts = text.split()
+    if len(parts) < 2 or parts[0] != "Проём":
+        await update.message.reply_text("Неверный формат. Выберите проём из списка.")
+        return DELETE_CHOICE
+    number_str = parts[1].rstrip(":")
+    try:
+        number = int(number_str)
+        index = number - 1
+        openings = context.user_data["openings"]
+        if index < 0 or index >= len(openings):
+            raise ValueError
+    except:
+        await update.message.reply_text("Неверный выбор проёма.")
+        return DELETE_CHOICE
+    context.user_data["delete_index"] = index
+    proem = context.user_data["openings"][index]
+    kb = [[KeyboardButton("Да, удалить"), KeyboardButton("Отмена")]]
+    markup = ReplyKeyboardMarkup(kb, resize_keyboard=True)
+    await update.message.reply_text(
+        f"Вы уверены, что хотите удалить «Проём {number}: {proem['room']}»?",
+        reply_markup=markup
+    )
+    return DELETE_CONFIRM
+
+async def delete_confirm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.lower()
+    if text == "да, удалить":
+        index = context.user_data["delete_index"]
+        proem = context.user_data["openings"].pop(index)
+        await update.message.reply_text(f"Проём «{proem['room']}» удалён.")
+    else:
+        await update.message.reply_text("Удаление отменено.")
+    return await opening_menu_return(update, context)
 
 # ------------------------------------------------------------
-# Основная функция: запуск бота
+# Основная функция запуска бота
 # ------------------------------------------------------------
 def main():
     request = HTTPXRequest(connect_timeout=60.0, read_timeout=60.0)
@@ -505,7 +1002,7 @@ def main():
 
     conv_handler = ConversationHandler(
         entry_points=[
-            # Как только пользователь пишет любое сообщение, показываем клавиатуру "Запустить"/"Отключить бота"
+            # При любом новом сообщении в чате, если диалог не начат, показываем "Запустить"/"Отключить бота"
             MessageHandler(filters.ALL & ~filters.UpdateType.EDITED, show_launch_menu)
         ],
         states={
@@ -522,10 +1019,39 @@ def main():
             GET_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
             GET_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
             GET_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_address)],
-            # Здесь следует добавить остальные состояния замера (ENTER_ROOM, ENTER_DOOR_TYPE, ... OPENING_MENU, CHECK_MEASURE, и т.д.)
+
             ENTER_ROOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_room)],
-            # ... остальные обработчики шагов замера ...
-            CHECK_MEASURE: [MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: check_measure(u, c))]
+            ENTER_DOOR_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_door_type)],
+            ENTER_DOOR_TYPE_CUSTOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_door_type_custom)],
+            ENTER_DIMENSIONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_dimensions)],
+            ENTER_CANVAS: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_canvas)],
+            ENTER_DOBOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_dobor)],
+            ENTER_DOBOR_CUSTOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_dobor_custom)],
+            ENTER_DOBOR_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_dobor_count)],
+            ENTER_DOBOR_COUNT_CUSTOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_dobor_count_custom)],
+            ENTER_NALICHNIKI_CHOICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_nalichniki_choice)],
+            ENTER_NALICHNIKI_CUSTOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_nalichniki_custom)],
+            ENTER_THRESHOLD_CHOICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, threshold_choice)],
+            ENTER_DEMONTAGE_CHOICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, demontage_choice)],
+            ENTER_OPENING_CHOICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, opening_choice)],
+            ENTER_OPENING_CUSTOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, opening_custom)],
+            ENTER_COMMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_comment)],
+            ENTER_PHOTOS: [
+                MessageHandler(filters.PHOTO, enter_photos),
+                MessageHandler(filters.Regex(f"^{DONE_TEXT}$"), enter_photos),
+                MessageHandler(filters.Regex(f"^{SKIP_TEXT}$"), enter_photos),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, enter_photos)
+            ],
+            OPENING_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_opening_menu)],
+
+            EDIT_CHOICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_choice_handler)],
+            EDIT_FIELD: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_field_handler)],
+            EDIT_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_value_handler)],
+
+            DELETE_CHOICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, delete_choice_handler)],
+            DELETE_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, delete_confirm_handler)],
+
+            CHECK_MEASURE: [MessageHandler(filters.TEXT & ~filters.COMMAND, check_measure_response)]
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
